@@ -31,3 +31,16 @@ IMAP/POP3 are mailbox access protocols, not outbound dispatch mechanisms. This A
 - `GET /health`: health check.
 
 The UI reports registration success only after the API accepts the request and the SMTP dispatch succeeds. Login/session issuance, password reset, unsubscribe/preferences management, CAPTCHA, transactional email monitoring, and a managed production database still need to be added before this should be treated as a complete production identity platform. The present registration API intentionally does not issue login sessions.
+
+## Production payments (Stripe + PayPal)
+The API includes hosted Stripe Checkout and PayPal Orders v2 create/capture routes. Both routes calculate prices from active rows in Supabase `products`; browser-submitted prices are ignored. Add these secrets to the API host (never to GitHub or `index.html`): `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the publishable key is suitable for public active-product reads), `STRIPE_SECRET_KEY`, `PAYPAL_CLIENT_ID`, and `PAYPAL_CLIENT_SECRET`. Start with `PAYPAL_MODE=sandbox`; switch to `live` only after sandbox verification. Set `CHECKOUT_SUCCESS_URL` and `CHECKOUT_CANCEL_URL` to the production return URLs. Install dependencies again after updating `package.json`.
+
+Routes:
+- `POST /api/payments/stripe/session` with `{ "items": [{ "product_id": "<uuid>", "quantity": 1 }] }` returns a hosted Stripe Checkout URL.
+- `POST /api/payments/paypal/order` with the same item shape returns a PayPal approval URL.
+- `POST /api/payments/paypal/capture` with `{ "orderId": "<PayPal order ID>" }` captures an approved order.
+
+Do not treat a browser redirect as proof of payment. Before fulfillment, implement and configure a verified Stripe webhook for `checkout.session.completed` and reconcile PayPal capture status server-side with a durable orders table. Current demo placeholder products have no database UUID and cannot be purchased until actual catalogue rows, prices, stock and fulfilment rules are entered. Taxes, shipping, refunds, order persistence, idempotency and SCA/business compliance must be completed before accepting live transactions.
+
+## UDAG SMTP and Supabase Auth email
+The existing mail API sends contact messages to both `info@digital-future.ai` and `server@digital-future.ai` via `smtps.udag.de:465` (or port 587 with STARTTLS). Put the real mailbox password in the API host's `SMTP_PASS` secret. Supabase Auth confirmation/reset emails are sent by Supabase, not by this Node API; configure Custom SMTP in the Supabase project's Authentication > SMTP settings with host `smtps.udag.de`, port 465, user/sender `info@digital-future.ai`, and the mailbox password in Supabase's secret field. Never commit that password.
