@@ -92,7 +92,8 @@ app.use((req,res,next)=>{
 const cjAdminToken = process.env.CJ_MCP_ADMIN_TOKEN || '';
 function requireCjAdmin(req,res,next){
  const supplied=String(req.get('authorization')||'').replace(/^Bearer\s+/i,'');
- if(!cjAdminToken || !supplied || !crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(cjAdminToken))) return res.status(401).json({error:'Unauthorized'});
+ const a=Buffer.from(supplied); const b=Buffer.from(cjAdminToken);
+ if(!cjAdminToken || !supplied || a.length!==b.length || !crypto.timingSafeEqual(a,b)) return res.status(401).json({error:'Unauthorized'});
  next();
 }
 app.get('/api/cj/status',requireCjAdmin,async(req,res)=>{
