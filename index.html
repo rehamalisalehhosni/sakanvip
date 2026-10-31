@@ -48,14 +48,18 @@ main .hero{display:grid;width:100%;min-height:100vh;margin-top:24px;padding-top:
 @media(max-width:560px){.topbar .crest-header{width:55px;height:55px}.footer .footer-crest{width:72px;height:72px;min-width:72px;min-height:72px}}
 
 
-/* Vendor-ready empty luxury card system: exactly nine cards per grid. */
+/* Standardized supplier-ready grid and product card architecture. */
 .category-tiles,
 .product-grid{
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  grid-auto-rows:minmax(400px,1fr);
+  grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
+  grid-auto-rows:minmax(480px,1fr);
   align-items:stretch;
-  gap:20px;
+  gap:30px;
+  padding:40px 20px;
+  max-width:1500px;
+  margin:0 auto;
+  box-sizing:border-box;
 }
 .category-tiles .tile,
 .product-grid .wire-card{
@@ -66,16 +70,16 @@ main .hero{display:grid;width:100%;min-height:100vh;margin-top:24px;padding-top:
   align-items:stretch;
   width:100%;
   height:100%;
-  min-height:400px;
+  min-height:480px;
   box-sizing:border-box;
-  padding:16px;
+  padding:18px;
   overflow:hidden;
   cursor:pointer;
   color:var(--champagne);
   background:#100E17;
   border:2px solid #D4AF37;
-  border-radius:12px;
-  box-shadow:0 5px 22px #0009;
+  border-radius:14px;
+  box-shadow:0 4px 20px rgba(0,0,0,.5);
   transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease;
 }
 .category-tiles .tile img,
@@ -91,11 +95,11 @@ main .hero{display:grid;width:100%;min-height:100vh;margin-top:24px;padding-top:
   flex:1 1 auto;
   width:100%;
   min-height:0;
-  margin:0 0 14px;
+  margin:0 0 18px;
   box-sizing:border-box;
   background:transparent;
-  border:1px dashed rgba(212,175,55,.28);
-  border-radius:8px;
+  border:1px dashed rgba(212,175,55,.24);
+  border-radius:9px;
 }
 .category-tiles .tile-label{
   position:static;
@@ -106,22 +110,39 @@ main .hero{display:grid;width:100%;min-height:100vh;margin-top:24px;padding-top:
   text-align:center;
 }
 .category-tiles .tile-label b,
-.product-grid .wire-card strong{
+.product-grid .wire-card .card-metadata strong{
   display:block;
   margin:0;
   color:#F3E5AB;
-  font:600 16px var(--serif);
+  font-family:'Cinzel',var(--serif);
+  font-size:16px;
+  font-weight:600;
   letter-spacing:.04em;
   text-transform:uppercase;
 }
 .category-tiles .tile-label small,
-.product-grid .wire-card small{
+.product-grid .wire-card .card-cta{
   display:block;
   margin-top:10px;
   color:#D4AF37;
   font-size:10px;
   font-weight:600;
   letter-spacing:1.2px;
+}
+.product-grid .wire-card .card-metadata{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+  width:100%;
+  text-align:center;
+}
+.product-grid .wire-card .card-price{
+  display:block;
+  color:#D4AF37;
+  font-size:18px;
+  font-weight:700;
+  line-height:1.35;
 }
 .category-tiles .tile:hover,
 .product-grid .wire-card:hover{
@@ -130,12 +151,14 @@ main .hero{display:grid;width:100%;min-height:100vh;margin-top:24px;padding-top:
   box-shadow:0 12px 30px rgba(212,175,55,.16);
 }
 .product-grid .wire-card:before{content:none}
-@media(max-width:900px){
-  .category-tiles,.product-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(400px,1fr);gap:16px}
-}
 @media(max-width:560px){
-  .category-tiles,.product-grid{grid-template-columns:minmax(0,1fr);grid-auto-rows:minmax(400px,1fr);gap:16px}
-  .category-tiles .tile,.product-grid .wire-card{min-height:400px}
+  .category-tiles,.product-grid{
+    grid-template-columns:minmax(0,1fr);
+    grid-auto-rows:minmax(480px,1fr);
+    gap:20px;
+    padding:24px 12px;
+  }
+  .category-tiles .tile,.product-grid .wire-card{min-height:480px}
 }
 
 </style>
@@ -209,15 +232,15 @@ function t(key){return (dict[lang]&&dict[lang][key])||dict.de[key]||key}
 function label(c){return c[lang]||c.de}
 function renderNav(){const nav=$('nav');nav.replaceChildren();categories.forEach(c=>{const b=document.createElement('button');b.type='button';safeText(b,label(c));b.addEventListener('click',()=>openCategory(c));nav.append(b)})}
 function renderTiles(){const host=$('categoryTiles');host.replaceChildren();categories.slice(2).forEach(c=>{const tile=document.createElement('article');tile.className='tile';tile.tabIndex=0;tile.setAttribute('role','button');tile.setAttribute('aria-label',label(c));const slot=document.createElement('div');slot.className='card-image-slot';slot.setAttribute('aria-hidden','true');const lab=document.createElement('div');lab.className='tile-label';const b=document.createElement('b');safeText(b,label(c));const sm=document.createElement('small');safeText(sm,lang==='de'?'JETZT ENTDECKEN →':'DISCOVER NOW →');lab.append(b,sm);tile.append(slot,lab);tile.addEventListener('click',()=>openCategory(c));tile.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openCategory(c)}});host.append(tile)})}
-function makeGrid(host,count,category){host.replaceChildren();for(let i=1;i<=9;i++){const card=document.createElement('article');card.className='wire-card';card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',(category||'VIP')+' '+(lang==='de'?'Platz':'slot')+' '+i);const slot=document.createElement('div');slot.className='card-image-slot';slot.setAttribute('aria-hidden','true');const labelEl=document.createElement('strong');safeText(labelEl,category||'SAKANVIP');const cta=document.createElement('small');safeText(cta,lang==='de'?'JETZT ENTDECKEN →':'DISCOVER NOW →');card.append(slot,labelEl,cta);const activate=()=>showProduct(category||'VIP',i);card.addEventListener('click',activate);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}});host.append(card)}}
-function openCategory(c){$('womenSection').classList.add('hidden');$('menSection').classList.add('hidden');$('categoryView').classList.remove('hidden');safeText($('categoryTitle'),label(c));makeGrid($('categoryGrid'),9,label(c));$('categoryView').scrollIntoView({behavior:'smooth'})}
+function makeGrid(host,count,category){host.replaceChildren();for(let i=1;i<=count;i++){const card=document.createElement('article');card.className='wire-card';card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',(category||'VIP')+' '+(lang==='de'?'Platz':'slot')+' '+i);const slot=document.createElement('div');slot.className='card-image-slot';slot.setAttribute('aria-hidden','true');const meta=document.createElement('div');meta.className='card-metadata';const labelEl=document.createElement('strong');safeText(labelEl,(category||'SAKANVIP')+' / Exclusive Item');const price=document.createElement('span');price.className='card-price';safeText(price,'€ 0.00 / '+(lang==='de'?'Auf Anfrage':'Supplier price on request'));const cta=document.createElement('small');cta.className='card-cta';safeText(cta,lang==='de'?'JETZT ENTDECKEN →':'DISCOVER NOW →');meta.append(labelEl,price,cta);card.append(slot,meta);const activate=()=>showProduct(category||'VIP',i);card.addEventListener('click',activate);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}});host.append(card)}}
+function openCategory(c){$('womenSection').classList.add('hidden');$('menSection').classList.add('hidden');$('categoryView').classList.remove('hidden');safeText($('categoryTitle'),label(c));makeGrid($('categoryGrid'),20,label(c));$('categoryView').scrollIntoView({behavior:'smooth'})}
 function showHome(){ $('womenSection').classList.remove('hidden');$('menSection').classList.remove('hidden');$('categoryView').classList.add('hidden');$('categories').scrollIntoView({behavior:'smooth'})}
 function showProduct(category,index){currentProduct={category,index};safeText($('productModalTitle'),category+' · '+String(index).padStart(2,'0'));safeText($('productDescription'),'SAKANVIP · '+category+' · Vendor slot '+index);$('productPrice').value='149.00';$('productQty').value='1';openModal('productModal')}
 function openModal(id){$(id).classList.add('open');document.body.style.overflow='hidden'}
 function closeModal(id){$(id).classList.remove('open');if(!document.querySelector('.modal-backdrop.open'))document.body.style.overflow=''}
 function updateCart(){const host=$('cartItems');host.replaceChildren();let total=0;cart.forEach((item,i)=>{total+=item.price*item.qty;const line=document.createElement('div');line.className='cart-line';const left=document.createElement('div');const name=document.createElement('strong');safeText(name,item.name);const detail=document.createElement('small');safeText(detail,item.size+' · '+item.color+' · '+item.qty+' × '+money(item.price));left.append(name,detail);const right=document.createElement('div');safeText(right,money(item.price*item.qty));const remove=document.createElement('button');remove.className='outline-btn';remove.style.padding='4px 8px';remove.style.marginTop='5px';safeText(remove,'×');remove.setAttribute('aria-label','Remove item');remove.addEventListener('click',()=>{cart.splice(i,1);updateCart()});right.append(document.createElement('br'),remove);line.append(left,right);host.append(line)});if(!cart.length){const empty=document.createElement('p');empty.className='empty';safeText(empty,'Ihr Warenkorb ist noch leer.');host.append(empty)}safeText($('cartCount'),cart.reduce((s,x)=>s+x.qty,0));safeText($('cartTotal'),money(total))}
 function addToCart(){const qty=Math.max(1,Math.min(20,Number.parseInt($('productQty').value,10)||1));const price=Math.max(0,Number($('productPrice').value)||0);cart.push({name:(currentProduct?.category||'VIP')+' · '+(currentProduct?.index||1),qty,price,size:$('productSize').value,color:$('productColor').value});updateCart();closeModal('productModal');$('cartDrawer').classList.add('open');$('cartDrawer').setAttribute('aria-hidden','false')}
-function setLanguage(next){lang=next;document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';document.body.dir=lang==='ar'?'rtl':'ltr';document.querySelectorAll('[data-i18n]').forEach(el=>safeText(el,t(el.dataset.i18n)));$('search').placeholder=lang==='en'?'Search luxury, brands or categories…':'Suche nach Luxus, Marken oder Kategorien…';$('trackingId').placeholder=lang==='en'?'Enter tracking number':'Sendungsnummer eingeben';renderNav();renderTiles();makeGrid($('womenGrid'),9,label(categories[2]));makeGrid($('menGrid'),9,label(categories[10]));updateCart()}
+function setLanguage(next){lang=next;document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';document.body.dir=lang==='ar'?'rtl':'ltr';document.querySelectorAll('[data-i18n]').forEach(el=>safeText(el,t(el.dataset.i18n)));$('search').placeholder=lang==='en'?'Search luxury, brands or categories…':'Suche nach Luxus, Marken oder Kategorien…';$('trackingId').placeholder=lang==='en'?'Enter tracking number':'Sendungsnummer eingeben';renderNav();renderTiles();makeGrid($('womenGrid'),20,label(categories[2]));makeGrid($('menGrid'),20,label(categories[10]));updateCart()}
 $('language').addEventListener('change',e=>setLanguage(e.target.value));
 $('exploreBtn').addEventListener('click',showHome);
 $('nav').addEventListener('click',e=>{if(e.target.closest('button')&&e.target.textContent===label(categories[0]))showHome()});
@@ -240,8 +263,8 @@ document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',
 document.querySelectorAll('[data-modal]').forEach(b=>b.addEventListener('click',()=>openModal(b.dataset.modal)));
 document.querySelectorAll('.modal-backdrop').forEach(back=>back.addEventListener('click',e=>{if(e.target===back)closeModal(back.id)}));
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.modal-backdrop.open').forEach(x=>closeModal(x.id));$('cartDrawer').classList.remove('open');$('cartDrawer').setAttribute('aria-hidden','true')}});
-$('search').addEventListener('keydown',e=>{if(e.key!=='Enter')return;const q=e.target.value.trim().toLocaleLowerCase();const c=categories.find(x=>Object.values(x).some(v=>typeof v==='string'&&v.toLocaleLowerCase().includes(q)));if(c)openCategory(c);else if(q)makeGrid($('categoryGrid'),9,'Suchergebnis: '+q),$('categoryTitle').textContent='Suchergebnisse', $('womenSection').classList.add('hidden'),$('menSection').classList.add('hidden'),$('categoryView').classList.remove('hidden')});
-renderNav();renderTiles();makeGrid($('womenGrid'),9,label(categories[2]));makeGrid($('menGrid'),9,label(categories[10]));updateCart();
+$('search').addEventListener('keydown',e=>{if(e.key!=='Enter')return;const q=e.target.value.trim().toLocaleLowerCase();const c=categories.find(x=>Object.values(x).some(v=>typeof v==='string'&&v.toLocaleLowerCase().includes(q)));if(c)openCategory(c);else if(q)makeGrid($('categoryGrid'),20,'Suchergebnis: '+q),$('categoryTitle').textContent='Suchergebnisse', $('womenSection').classList.add('hidden'),$('menSection').classList.add('hidden'),$('categoryView').classList.remove('hidden')});
+renderNav();renderTiles();makeGrid($('womenGrid'),20,label(categories[2]));makeGrid($('menGrid'),20,label(categories[10]));updateCart();
 })();
 </script>
 </body>
