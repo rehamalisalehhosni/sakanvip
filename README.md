@@ -27,7 +27,7 @@ Secrets for local runs go in a git-ignored `.dev.vars` file (same names as below
 
 Cloudflare dashboard → Workers & Pages → Create → Import a repository → `sakan-app/sakanvip`:
 
-- Project name: `sakanvip`
+- Project name: `sakanvip-cf`
 - Build command: *(leave empty)*
 - Deploy command: `npx wrangler deploy`
 

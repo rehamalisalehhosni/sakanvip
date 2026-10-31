@@ -3,7 +3,7 @@
 // dashboard (Settings -> Variables and Secrets, type Secret), never here.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sakanvip",
+  "name": "sakanvip-cf",
   "main": "worker/index.js",
   "compatibility_date": "2026-10-27",
   "compatibility_flags": ["nodejs_compat"],
