@@ -178,5 +178,6 @@ app.post('/api/payments/paypal/capture',limiter,async(req,res)=>{
  try{const token=await paypalAccessToken();const response=await fetch(paypalBase+'/v2/checkout/orders/'+encodeURIComponent(orderId)+'/capture',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','PayPal-Request-Id':crypto.randomUUID()},body:'{}'});const data=await response.json();if(!response.ok||data.status!=='COMPLETED')throw new Error(data.message||'Capture not completed');res.json({ok:true,status:data.status,id:data.id});}
  catch(err){console.error('PayPal capture error:',err.message);res.status(400).json({error:'PayPal-Zahlung konnte nicht abgeschlossen werden.'});}
 });
-\napp.get('/health',(req,res)=>res.json({ok:true}));
+
+app.get('/health',(req,res)=>res.json({ok:true}));
 app.listen(port,'0.0.0.0',()=>console.log(`SakanVIP API listening on ${port}; SMTP host ${process.env.SMTP_HOST} port ${smtpPort}`));
