@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import Stripe from 'stripe';
 import fs from 'node:fs';
 import path from 'node:path';
+import { callCjTool, listCjTools } from './cj-mcp.js';
 
 const required = ['SMTP_HOST','SMTP_PORT','SMTP_USER','SMTP_PASS','MAIL_FROM','PUBLIC_API_URL','ALLOWED_ORIGIN'];
 for (const key of required) if (!process.env[key]) throw new Error(`Missing required environment variable: ${key}`);
@@ -88,6 +89,23 @@ app.use((req,res,next)=>{
  if(req.method==='OPTIONS') return res.sendStatus(204);
  next();
 });
+const cjAdminToken = process.env.CJ_MCP_ADMIN_TOKEN || '';
+function requireCjAdmin(req,res,next){
+ const supplied=String(req.get('authorization')||'').replace(/^Bearer\s+/i,'');
+ if(!cjAdminToken || !supplied || !crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(cjAdminToken))) return res.status(401).json({error:'Unauthorized'});
+ next();
+}
+app.get('/api/cj/status',requireCjAdmin,async(req,res)=>{
+ try{const tools=await listCjTools();res.json({configured:true,tools:tools.map(t=>({name:t.name,description:t.description||''}))});}
+ catch(err){console.error('CJ MCP connection failed:',err.message);res.status(503).json({error:'CJ MCP connection unavailable.'});}
+});
+app.post('/api/cj/read-tool',requireCjAdmin,async(req,res)=>{
+ const name=String(req.body?.name||'');
+ if(!['search_products','query_sku_details','get_warehouses','calculate_freight'].includes(name)) return res.status(400).json({error:'Tool is not enabled for this read-only endpoint.'});
+ try{const result=await callCjTool(name,req.body?.arguments||{});res.json({result});}
+ catch(err){console.error('CJ MCP tool failed:',name,err.message);res.status(502).json({error:'CJ tool request failed.'});}
+});
+
 const limiter=rateLimit({windowMs:15*60*1000,limit:8,standardHeaders:true,legacyHeaders:false,message:{error:'Zu viele Versuche. Bitte später erneut versuchen.'}});
 const mailer=nodemailer.createTransport({host:process.env.SMTP_HOST,port:smtpPort,secure, requireTLS:!secure,auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS},tls:{minVersion:'TLSv1.2'}});
 const emailOk=value=>typeof value==='string' && value.length<=254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
