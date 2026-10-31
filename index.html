@@ -19,7 +19,7 @@
 .topbar{min-height:76px;height:auto;padding:8px 0}
 .top-left{flex:1;min-width:0}
 .crest{display:block;object-fit:contain;border:2px solid var(--gold);border-radius:50%;background:#08070b;box-shadow:0 0 15px #d4af3780;flex:none}
-.crest-header{width:60px;height:60px}
+.crest-header{width:60px;height:60px}.crest-fallback{width:60px;height:60px;border:2px solid var(--gold);border-radius:50%;display:grid;place-items:center;color:var(--champagne);font:700 27px var(--serif);box-shadow:0 0 15px #d4af3780;background:radial-gradient(circle,#17131d,#08070b)}.footer-crest-fallback{width:80px;height:80px;font-size:34px}
 .auth-actions{display:flex;align-items:center;gap:8px}
 .glass-auth{border:1px solid var(--gold)!important;border-radius:28px!important;padding:10px 15px!important;background:linear-gradient(135deg,#ffffff12,#d4af3718)!important;color:var(--champagne)!important;font:600 10px var(--sans)!important;letter-spacing:.5px;box-shadow:inset 0 0 12px #d4af3710,0 0 12px #d4af3722}
 .glass-auth:hover{background:#d4af3733!important;box-shadow:0 0 20px #d4af3766}
@@ -132,6 +132,7 @@ $('checkoutBtn').addEventListener('click',()=>{if(!cart.length){safeText($('chec
 $('paymentMethods').addEventListener('click',e=>{const b=e.target.closest('[data-pay]');if(!b)return;selectedPay=b.dataset.pay;document.querySelectorAll('.pay-option').forEach(x=>x.classList.toggle('selected',x===b))});
 $('placeOrder').addEventListener('click',()=>safeText($('checkoutMessage'),'Demo ausgewählt: '+selectedPay+'. Es wurde keine Zahlung ausgelöst.'));
 $('trackBtn').addEventListener('click',()=>{const id=$('trackingId').value.trim();const result=$('trackResult');if(!id){safeText(result,'Bitte geben Sie eine Sendungsnummer ein.');return}safeText(result,'Demo-Status für '+id+': Auftrag erfasst → Versandvorbereitung. Dies ist keine Live-Sendungsverfolgung.')});
+document.querySelectorAll('.crest').forEach(img=>img.addEventListener('error',()=>{const mark=document.createElement('span');mark.className='crest-fallback'+(img.classList.contains('footer-crest')?' footer-crest-fallback':'');mark.setAttribute('aria-label','Sakanvip royal crest');mark.textContent='S';img.replaceWith(mark)}));
 function showAuth(mode){safeText($('authTitle'),mode==='register'?'Registrieren':'Anmelden');safeText($('authIntro'),mode==='register'?'Erstellen Sie Ihr Sakanvip-Konto.':'Willkommen zurück bei Sakanvip.');$('authPassword').setAttribute('autocomplete',mode==='register'?'new-password':'current-password');openModal('authModal')}
 ['signInBtn','heroSignInBtn'].forEach(id=>$(id).addEventListener('click',()=>showAuth('login')));
 ['registerBtn','heroRegisterBtn'].forEach(id=>$(id).addEventListener('click',()=>showAuth('register')));
