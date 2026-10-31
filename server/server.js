@@ -80,7 +80,7 @@ async function paypalAccessToken(){
 \nconst app = express();
 app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json({ limit: '12kb' }));
+app.use(express.json({ limit: '1mb', verify:(req,res,buf)=>{if(req.originalUrl==='/api/payments/stripe/webhook')req.rawBody=Buffer.from(buf)} }));
 app.use((req,res,next)=>{
  const origin=req.get('origin');
  if(origin && origin!==process.env.ALLOWED_ORIGIN) return res.status(403).json({error:'Origin not allowed'});
@@ -161,6 +161,26 @@ app.post('/api/contact',limiter,async(req,res)=>{
 });
 
 
+app.post('/api/payments/stripe/webhook',async(req,res)=>{
+ if(!stripe||!process.env.STRIPE_WEBHOOK_SECRET)return res.status(503).send('Stripe webhook is not configured.');
+ const signature=req.get('stripe-signature');
+ if(!signature||!req.rawBody)return res.status(400).send('Missing Stripe signature or raw request body.');
+ let event;
+ try{event=stripe.webhooks.constructEvent(req.rawBody,signature,process.env.STRIPE_WEBHOOK_SECRET);}
+ catch(err){console.error('Stripe webhook signature verification failed:',err.message);return res.status(400).send('Invalid Stripe signature.');}
+ switch(event.type){
+  case 'checkout.session.completed':
+  case 'checkout.session.async_payment_succeeded':
+   console.log('Stripe payment completed:',event.data.object.id,event.data.object.payment_status);
+   break;
+  case 'checkout.session.async_payment_failed':
+   console.warn('Stripe asynchronous payment failed:',event.data.object.id);
+   break;
+  default:
+   console.log('Stripe webhook event received:',event.type);
+ }
+ res.json({received:true});
+});
 app.post('/api/payments/stripe/session',limiter,async(req,res)=>{
  if(!stripe)return res.status(503).json({error:'Stripe ist noch nicht konfiguriert.'});
  try{
