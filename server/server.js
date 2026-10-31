@@ -5,6 +5,7 @@ import nodemailer from 'nodemailer';
 import bcrypt from 'bcryptjs';
 import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
+import Stripe from 'stripe';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -38,7 +39,35 @@ CREATE TABLE IF NOT EXISTS subscriptions (
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `);
-const app = express();
+
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const paypalBase = process.env.PAYPAL_MODE === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
+const paypalReady = Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
+async function trustedCart(items) {
+ if (!Array.isArray(items) || !items.length || items.length > 50) throw new Error('Warenkorb ungültig.');
+ if (!supabaseUrl || !supabaseAnonKey) throw new Error('Produktdatenbank ist nicht konfiguriert.');
+ const normalized = items.map(x=>({id:String(x.product_id||''),quantity:Number(x.quantity)}));
+ if (normalized.some(x=>!/^([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(x.id)||!Number.isInteger(x.quantity)||x.quantity<1||x.quantity>20)) throw new Error('Warenkorbposition ungültig.');
+ const ids=[...new Set(normalized.map(x=>x.id))];
+ const url=new URL('/rest/v1/products',supabaseUrl);
+ url.searchParams.set('select','id,name,price,active');
+ url.searchParams.set('id',`in.(${ids.join(',')})`);
+ url.searchParams.set('active','eq.true');
+ const response=await fetch(url,{headers:{apikey:supabaseAnonKey,Authorization:`Bearer ${supabaseAnonKey}`}});
+ if(!response.ok) throw new Error('Produktdaten konnten nicht geladen werden.');
+ const products=await response.json();
+ const byId=new Map(products.map(p=>[p.id,p]));
+ if(ids.some(id=>!byId.has(id))) throw new Error('Ein Produkt ist nicht verfügbar.');
+ return normalized.map(x=>({product:byId.get(x.id),quantity:x.quantity}));
+}
+async function paypalAccessToken(){
+ const auth=Buffer.from(process.env.PAYPAL_CLIENT_ID+':'+process.env.PAYPAL_CLIENT_SECRET).toString('base64');
+ const r=await fetch(paypalBase+'/v1/oauth2/token',{method:'POST',headers:{Authorization:'Basic '+auth,'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=client_credentials'});
+ const data=await r.json();if(!r.ok||!data.access_token)throw new Error('PayPal Auth fehlgeschlagen.');return data.access_token;
+}
+\nconst app = express();
 app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '12kb' }));
@@ -121,5 +150,33 @@ app.post('/api/contact',limiter,async(req,res)=>{
  } catch(err){console.error('Contact mail dispatch failed:',err.message);res.status(503).json({error:'Ihre Nachricht konnte momentan nicht versendet werden.'});}
 });
 
-app.get('/health',(req,res)=>res.json({ok:true}));
+
+app.post('/api/payments/stripe/session',limiter,async(req,res)=>{
+ if(!stripe)return res.status(503).json({error:'Stripe ist noch nicht konfiguriert.'});
+ try{
+  const items=await trustedCart(req.body?.items);
+  const line_items=items.map(({product,quantity})=>({quantity,price_data:{currency:'eur',unit_amount:Math.round(Number(product.price)*100),product_data:{name:product.name}}}));
+  const session=await stripe.checkout.sessions.create({mode:'payment',line_items,success_url:process.env.CHECKOUT_SUCCESS_URL||'https://sakan-app.github.io/sakanvip/?payment=success',cancel_url:process.env.CHECKOUT_CANCEL_URL||'https://sakan-app.github.io/sakanvip/?payment=cancel'});
+  res.json({url:session.url,id:session.id});
+ }catch(err){console.error('Stripe checkout error:',err.message);res.status(400).json({error:'Stripe-Checkout konnte nicht gestartet werden.'});}
+});
+app.post('/api/payments/paypal/order',limiter,async(req,res)=>{
+ if(!paypalReady)return res.status(503).json({error:'PayPal ist noch nicht konfiguriert.'});
+ try{
+  const items=await trustedCart(req.body?.items);
+  const total=items.reduce((sum,x)=>sum+Number(x.product.price)*x.quantity,0);
+  const token=await paypalAccessToken();
+  const response=await fetch(paypalBase+'/v2/checkout/orders',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','PayPal-Request-Id':crypto.randomUUID()},body:JSON.stringify({intent:'CAPTURE',purchase_units:[{amount:{currency_code:'EUR',value:total.toFixed(2)},items:items.map(({product,quantity})=>({name:String(product.name).slice(0,127),quantity:String(quantity),unit_amount:{currency_code:'EUR',value:Number(product.price).toFixed(2)}}))}],application_context:{return_url:process.env.CHECKOUT_SUCCESS_URL||'https://sakan-app.github.io/sakanvip/?payment=paypal-approved',cancel_url:process.env.CHECKOUT_CANCEL_URL||'https://sakan-app.github.io/sakanvip/?payment=cancel'}})});
+  const data=await response.json();if(!response.ok)throw new Error(data.message||'PayPal order create failed');
+  const approval=data.links?.find(x=>x.rel==='approve')?.href;if(!approval)throw new Error('PayPal approval URL missing');
+  res.json({id:data.id,url:approval});
+ }catch(err){console.error('PayPal order error:',err.message);res.status(400).json({error:'PayPal-Checkout konnte nicht gestartet werden.'});}
+});
+app.post('/api/payments/paypal/capture',limiter,async(req,res)=>{
+ if(!paypalReady)return res.status(503).json({error:'PayPal ist noch nicht konfiguriert.'});
+ const orderId=String(req.body?.orderId||'');if(!/^[A-Z0-9-]{8,64}$/i.test(orderId))return res.status(400).json({error:'Ungültige PayPal-Bestellnummer.'});
+ try{const token=await paypalAccessToken();const response=await fetch(paypalBase+'/v2/checkout/orders/'+encodeURIComponent(orderId)+'/capture',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','PayPal-Request-Id':crypto.randomUUID()},body:'{}'});const data=await response.json();if(!response.ok||data.status!=='COMPLETED')throw new Error(data.message||'Capture not completed');res.json({ok:true,status:data.status,id:data.id});}
+ catch(err){console.error('PayPal capture error:',err.message);res.status(400).json({error:'PayPal-Zahlung konnte nicht abgeschlossen werden.'});}
+});
+\napp.get('/health',(req,res)=>res.json({ok:true}));
 app.listen(port,'0.0.0.0',()=>console.log(`SakanVIP API listening on ${port}; SMTP host ${process.env.SMTP_HOST} port ${smtpPort}`));
