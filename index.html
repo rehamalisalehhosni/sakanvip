@@ -47,6 +47,97 @@
 main .hero{display:grid;width:100%;min-height:100vh;margin-top:24px;padding-top:0;box-sizing:border-box;background-color:#08070b;background-image:url('sakanvip-crest.webp');background-size:cover;background-position:center bottom;background-repeat:no-repeat}
 @media(max-width:560px){.topbar .crest-header{width:55px;height:55px}.footer .footer-crest{width:72px;height:72px;min-width:72px;min-height:72px}}
 
+
+/* Vendor-ready empty luxury card system: exactly nine cards per grid. */
+.category-tiles,
+.product-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-auto-rows:minmax(400px,1fr);
+  align-items:stretch;
+  gap:20px;
+}
+.category-tiles .tile,
+.product-grid .wire-card{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  align-items:stretch;
+  width:100%;
+  height:100%;
+  min-height:400px;
+  box-sizing:border-box;
+  padding:16px;
+  overflow:hidden;
+  cursor:pointer;
+  color:var(--champagne);
+  background:#100E17;
+  border:2px solid #D4AF37;
+  border-radius:12px;
+  box-shadow:0 5px 22px #0009;
+  transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease;
+}
+.category-tiles .tile img,
+.category-tiles .tile:after,
+.category-tiles .tile .wire-icon,
+.product-grid .wire-card .wire-icon,
+.product-grid .wire-card .tag{
+  display:none!important;
+  content:none!important;
+}
+.card-image-slot{
+  display:block;
+  flex:1 1 auto;
+  width:100%;
+  min-height:0;
+  margin:0 0 14px;
+  box-sizing:border-box;
+  background:transparent;
+  border:1px dashed rgba(212,175,55,.28);
+  border-radius:8px;
+}
+.category-tiles .tile-label{
+  position:static;
+  z-index:1;
+  display:block;
+  margin:0;
+  padding:8px 4px 4px;
+  text-align:center;
+}
+.category-tiles .tile-label b,
+.product-grid .wire-card strong{
+  display:block;
+  margin:0;
+  color:#F3E5AB;
+  font:600 16px var(--serif);
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.category-tiles .tile-label small,
+.product-grid .wire-card small{
+  display:block;
+  margin-top:10px;
+  color:#D4AF37;
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:1.2px;
+}
+.category-tiles .tile:hover,
+.product-grid .wire-card:hover{
+  transform:translateY(-4px);
+  border-color:#F3E5AB;
+  box-shadow:0 12px 30px rgba(212,175,55,.16);
+}
+.product-grid .wire-card:before{content:none}
+@media(max-width:900px){
+  .category-tiles,.product-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(400px,1fr);gap:16px}
+}
+@media(max-width:560px){
+  .category-tiles,.product-grid{grid-template-columns:minmax(0,1fr);grid-auto-rows:minmax(400px,1fr);gap:16px}
+  .category-tiles .tile,.product-grid .wire-card{min-height:400px}
+}
+
 </style>
 </head>
 <body>
@@ -87,16 +178,17 @@ main .hero{display:grid;width:100%;min-height:100vh;margin-top:24px;padding-top:
 (function(){
 'use strict';
 const categories=[
- {id:'home',de:'Startseite',en:'Home',fr:'Accueil',es:'Inicio',it:'Home',ar:'الرئيسية',tr:'Ana Sayfa',ru:'Главная',zh:'首页',icon:'⌂',img:'photo-1515886657613-9f3515b0c78f'},
- {id:'about',de:'Über Uns',en:'About Us',fr:'À propos',es:'Nosotros',it:'Chi siamo',ar:'من نحن',tr:'Hakkımızda',ru:'О нас',zh:'关于我们',icon:'♛',img:'photo-1519741497674-611481863552'},
- {id:'women',de:'Damenmode',en:'Women',fr:'Femme',es:'Mujer',it:'Donna',ar:'نسائي',tr:'Kadın',ru:'Женское',zh:'女装',icon:'✧',img:'photo-1483985988355-763728e1935b'},
- {id:'evening',de:'Abendkleider',en:'Eveningwear',fr:'Robes de soirée',es:'Vestidos de noche',it:'Abiti da sera',ar:'فساتين سهرة',tr:'Abiye',ru:'Вечерние платья',zh:'晚礼服',icon:'✦',img:'photo-1566174053879-31528523f8ae'},
- {id:'perfume',de:'Parfüm',en:'Fragrance',fr:'Parfum',es:'Perfume',it:'Profumo',ar:'عطور',tr:'Parfüm',ru:'Парфюм',zh:'香水',icon:'♧',img:'photo-1541643600914-78b084683601'},
- {id:'watches',de:'Uhren',en:'Watches',fr:'Montres',es:'Relojes',it:'Orologi',ar:'ساعات',tr:'Saatler',ru:'Часы',zh:'腕表',icon:'◷',img:'photo-1524592094714-0f0654e20314'},
- {id:'gifts',de:'Geschenke',en:'Gifts',fr:'Cadeaux',es:'Regalos',it:'Regali',ar:'هدايا',tr:'Hediyeler',ru:'Подарки',zh:'礼品',icon:'♢',img:'photo-1549465220-1a8b9238cd48'},
- {id:'accessories',de:'Accessoires',en:'Accessories',fr:'Accessoires',es:'Accesorios',it:'Accessori',ar:'إكسسوارات',tr:'Aksesuar',ru:'Аксессуары',zh:'配饰',icon:'◇',img:'photo-1490481651871-ab68de25d43d'},
- {id:'bags',de:'Taschen',en:'Bags',fr:'Sacs',es:'Bolsos',it:'Borse',ar:'حقائب',tr:'Çantalar',ru:'Сумки',zh:'手袋',icon:'▱',img:'photo-1584917865442-de89df76afd3'},
- {id:'men',de:'Herrenmode',en:'Men',fr:'Homme',es:'Hombre',it:'Uomo',ar:'رجالي',tr:'Erkek',ru:'Мужское',zh:'男装',icon:'♜',img:'photo-1617137968427-85924c800a22'}
+ {id:'home',de:'Startseite',en:'Home',fr:'Accueil',es:'Inicio',it:'Home',ar:'الرئيسية',tr:'Ana Sayfa',ru:'Главная',zh:'首页',icon:'⌂'},
+ {id:'about',de:'Über Uns',en:'About Us',fr:'À propos',es:'Nosotros',it:'Chi siamo',ar:'من نحن',tr:'Hakkımızda',ru:'О нас',zh:'关于我们',icon:'♛'},
+ {id:'women',de:'Damenmode',en:'Women',fr:'Femme',es:'Mujer',it:'Donna',ar:'نسائي',tr:'Kadın',ru:'Женское',zh:'女装',icon:'✧'},
+ {id:'evening',de:'Abendkleider',en:'Eveningwear',fr:'Robes de soirée',es:'Vestidos de noche',it:'Abiti da sera',ar:'فساتين سهرة',tr:'Abiye',ru:'Вечерние платья',zh:'晚礼服',icon:'✦'},
+ {id:'perfume',de:'Parfüm',en:'Fragrance',fr:'Parfum',es:'Perfume',it:'Profumo',ar:'عطور',tr:'Parfüm',ru:'Парфюм',zh:'香水',icon:'♧'},
+ {id:'watches',de:'Uhren',en:'Watches',fr:'Montres',es:'Relojes',it:'Orologi',ar:'ساعات',tr:'Saatler',ru:'Часы',zh:'腕表',icon:'◷'},
+ {id:'gifts',de:'Geschenke',en:'Gifts',fr:'Cadeaux',es:'Regalos',it:'Regali',ar:'هدايا',tr:'Hediyeler',ru:'Подарки',zh:'礼品',icon:'♢'},
+ {id:'accessories',de:'Accessoires',en:'Accessories',fr:'Accessoires',es:'Accesorios',it:'Accessori',ar:'إكسسوارات',tr:'Aksesuar',ru:'Аксессуары',zh:'配饰',icon:'◇'},
+ {id:'bags',de:'Taschen',en:'Bags',fr:'Sacs',es:'Bolsos',it:'Borse',ar:'حقائب',tr:'Çantalar',ru:'Сумки',zh:'手袋',icon:'▱'},
+ {id:'jewelry',de:'Schmuck',en:'Jewelry',fr:'Bijoux',es:'Joyería',it:'Gioielli',ar:'مجوهرات',tr:'Takı',ru:'Украшения',zh:'珠宝',icon:'◇'},
+ {id:'men',de:'Herrenmode',en:'Men',fr:'Homme',es:'Hombre',it:'Uomo',ar:'رجالي',tr:'Erkek',ru:'Мужское',zh:'男装',icon:'♜'}
 ];
 const dict={
 de:{signIn:"Anmelden",register:"Registrieren",eyebrow:'More Than Shopping',heroTitle:"IT'S A LIFESTYLE",heroText:'Exklusive Produkte. Für besondere Menschen. Nur das Beste. Nur für Sie.',explore:'VIP ENTDECKEN',vip:'VIP ONLY',vipSub:'Exklusiver Zugang',quality:'Premium Qualität',qualitySub:'Weltweit die besten Marken',shipping:'Diskreter Versand',shippingSub:'Sicher & zuverlässig',original:'100% Original',originalSub:'Garantierte Echtheit',categoriesTitle:'Entdecken Sie unsere Welt',categoriesSub:'Eine kuratierte Auswahl für einen außergewöhnlichen Lebensstil.',womenTitle:'Damenkollektion',menTitle:'Herrenkollektion',wireframeHint:'Exklusive Plätze für ausgewählte Partnermarken und Produkte.',benefit1:'EXKLUSIVE AUSWAHL',benefit1s:'Nur die besten Marken & Kollektionen',benefit2:'WELTWEITER VERSAND',benefit2s:'Sicher & zuverlässig',benefit3:'SICHERE ZAHLUNG',benefit3s:'Maximaler Schutz',benefit4:'VIP SUPPORT',benefit4s:'Persönlich & diskret',logisticsTitle:'Versand & Sendungsverfolgung',logisticsSub:'Verlässliche Logistikpartner für Ihre Bestellung.',track:'Sendung prüfen',cartTitle:'Ihr Warenkorb',subtotal:'Zwischensumme',checkout:'Zur Kasse',cartNote:'Demo-Warenkorb: Bestellungen und Zahlungen werden noch nicht verarbeitet.'},
@@ -116,16 +208,16 @@ const safeText=(el,value)=>{el.textContent=String(value)};
 function t(key){return (dict[lang]&&dict[lang][key])||dict.de[key]||key}
 function label(c){return c[lang]||c.de}
 function renderNav(){const nav=$('nav');nav.replaceChildren();categories.forEach(c=>{const b=document.createElement('button');b.type='button';safeText(b,label(c));b.addEventListener('click',()=>openCategory(c));nav.append(b)})}
-function renderTiles(){const host=$('categoryTiles');host.replaceChildren();categories.slice(2).forEach(c=>{const tile=document.createElement('article');tile.className='tile';tile.tabIndex=0;tile.setAttribute('role','button');tile.setAttribute('aria-label',label(c));const img=document.createElement('img');img.loading='lazy';img.alt='';img.src='https://images.unsplash.com/'+c.img+'?auto=format&fit=crop&w=600&q=75';const lab=document.createElement('div');lab.className='tile-label';const b=document.createElement('b');safeText(b,label(c));const sm=document.createElement('small');safeText(sm,lang==='de'?'JETZT ENTDECKEN →':'DISCOVER NOW →');lab.append(b,sm);tile.append(img,lab);tile.addEventListener('click',()=>openCategory(c));tile.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openCategory(c)}});host.append(tile)})}
-function makeGrid(host,count,category){host.replaceChildren();for(let i=1;i<=count;i++){const card=document.createElement('article');card.className='wire-card';card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',(category||'VIP')+' product slot '+i);const tag=document.createElement('span');tag.className='tag';safeText(tag,'♛ VIP');const icon=document.createElement('span');icon.className='wire-icon';safeText(icon,'◇');const strong=document.createElement('strong');safeText(strong,(category||'SAKANVIP')+' · '+String(i).padStart(2,'0'));const small=document.createElement('small');safeText(small,lang==='de'?'HÄNDLER-PRODUKTPLATZ':'VENDOR PRODUCT SLOT');card.append(tag,icon,strong,small);const activate=()=>showProduct(category||'VIP',i);card.addEventListener('click',activate);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}});host.append(card)}}
-function openCategory(c){$('womenSection').classList.add('hidden');$('menSection').classList.add('hidden');$('categoryView').classList.remove('hidden');safeText($('categoryTitle'),label(c));makeGrid($('categoryGrid'),20,label(c));$('categoryView').scrollIntoView({behavior:'smooth'})}
+function renderTiles(){const host=$('categoryTiles');host.replaceChildren();categories.slice(2).forEach(c=>{const tile=document.createElement('article');tile.className='tile';tile.tabIndex=0;tile.setAttribute('role','button');tile.setAttribute('aria-label',label(c));const slot=document.createElement('div');slot.className='card-image-slot';slot.setAttribute('aria-hidden','true');const lab=document.createElement('div');lab.className='tile-label';const b=document.createElement('b');safeText(b,label(c));const sm=document.createElement('small');safeText(sm,lang==='de'?'JETZT ENTDECKEN →':'DISCOVER NOW →');lab.append(b,sm);tile.append(slot,lab);tile.addEventListener('click',()=>openCategory(c));tile.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openCategory(c)}});host.append(tile)})}
+function makeGrid(host,count,category){host.replaceChildren();for(let i=1;i<=9;i++){const card=document.createElement('article');card.className='wire-card';card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',(category||'VIP')+' '+(lang==='de'?'Platz':'slot')+' '+i);const slot=document.createElement('div');slot.className='card-image-slot';slot.setAttribute('aria-hidden','true');const labelEl=document.createElement('strong');safeText(labelEl,category||'SAKANVIP');const cta=document.createElement('small');safeText(cta,lang==='de'?'JETZT ENTDECKEN →':'DISCOVER NOW →');card.append(slot,labelEl,cta);const activate=()=>showProduct(category||'VIP',i);card.addEventListener('click',activate);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}});host.append(card)}}
+function openCategory(c){$('womenSection').classList.add('hidden');$('menSection').classList.add('hidden');$('categoryView').classList.remove('hidden');safeText($('categoryTitle'),label(c));makeGrid($('categoryGrid'),9,label(c));$('categoryView').scrollIntoView({behavior:'smooth'})}
 function showHome(){ $('womenSection').classList.remove('hidden');$('menSection').classList.remove('hidden');$('categoryView').classList.add('hidden');$('categories').scrollIntoView({behavior:'smooth'})}
 function showProduct(category,index){currentProduct={category,index};safeText($('productModalTitle'),category+' · '+String(index).padStart(2,'0'));safeText($('productDescription'),'SAKANVIP · '+category+' · Vendor slot '+index);$('productPrice').value='149.00';$('productQty').value='1';openModal('productModal')}
 function openModal(id){$(id).classList.add('open');document.body.style.overflow='hidden'}
 function closeModal(id){$(id).classList.remove('open');if(!document.querySelector('.modal-backdrop.open'))document.body.style.overflow=''}
 function updateCart(){const host=$('cartItems');host.replaceChildren();let total=0;cart.forEach((item,i)=>{total+=item.price*item.qty;const line=document.createElement('div');line.className='cart-line';const left=document.createElement('div');const name=document.createElement('strong');safeText(name,item.name);const detail=document.createElement('small');safeText(detail,item.size+' · '+item.color+' · '+item.qty+' × '+money(item.price));left.append(name,detail);const right=document.createElement('div');safeText(right,money(item.price*item.qty));const remove=document.createElement('button');remove.className='outline-btn';remove.style.padding='4px 8px';remove.style.marginTop='5px';safeText(remove,'×');remove.setAttribute('aria-label','Remove item');remove.addEventListener('click',()=>{cart.splice(i,1);updateCart()});right.append(document.createElement('br'),remove);line.append(left,right);host.append(line)});if(!cart.length){const empty=document.createElement('p');empty.className='empty';safeText(empty,'Ihr Warenkorb ist noch leer.');host.append(empty)}safeText($('cartCount'),cart.reduce((s,x)=>s+x.qty,0));safeText($('cartTotal'),money(total))}
 function addToCart(){const qty=Math.max(1,Math.min(20,Number.parseInt($('productQty').value,10)||1));const price=Math.max(0,Number($('productPrice').value)||0);cart.push({name:(currentProduct?.category||'VIP')+' · '+(currentProduct?.index||1),qty,price,size:$('productSize').value,color:$('productColor').value});updateCart();closeModal('productModal');$('cartDrawer').classList.add('open');$('cartDrawer').setAttribute('aria-hidden','false')}
-function setLanguage(next){lang=next;document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';document.body.dir=lang==='ar'?'rtl':'ltr';document.querySelectorAll('[data-i18n]').forEach(el=>safeText(el,t(el.dataset.i18n)));$('search').placeholder=lang==='en'?'Search luxury, brands or categories…':'Suche nach Luxus, Marken oder Kategorien…';$('trackingId').placeholder=lang==='en'?'Enter tracking number':'Sendungsnummer eingeben';renderNav();renderTiles();makeGrid($('womenGrid'),9,label(categories[2]));makeGrid($('menGrid'),9,label(categories[9]));updateCart()}
+function setLanguage(next){lang=next;document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';document.body.dir=lang==='ar'?'rtl':'ltr';document.querySelectorAll('[data-i18n]').forEach(el=>safeText(el,t(el.dataset.i18n)));$('search').placeholder=lang==='en'?'Search luxury, brands or categories…':'Suche nach Luxus, Marken oder Kategorien…';$('trackingId').placeholder=lang==='en'?'Enter tracking number':'Sendungsnummer eingeben';renderNav();renderTiles();makeGrid($('womenGrid'),9,label(categories[2]));makeGrid($('menGrid'),9,label(categories[10]));updateCart()}
 $('language').addEventListener('change',e=>setLanguage(e.target.value));
 $('exploreBtn').addEventListener('click',showHome);
 $('nav').addEventListener('click',e=>{if(e.target.closest('button')&&e.target.textContent===label(categories[0]))showHome()});
