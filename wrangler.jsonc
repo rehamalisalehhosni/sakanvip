@@ -1,0 +1,34 @@
+// SakanVIP on Cloudflare Workers: static storefront + API in one Worker.
+// Secrets (SMTP_PASS, STRIPE_SECRET_KEY, PAYPAL_CLIENT_SECRET, ...) are set in the Cloudflare
+// dashboard (Settings -> Variables and Secrets, type Secret), never here.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sakanvip",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-27",
+  "compatibility_flags": ["nodejs_compat"],
+  // Copies index.html and the images into dist/ before every dev run and deploy.
+  "build": { "command": "node scripts/build-assets.mjs", "watch_dir": "worker" },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/health"]
+  },
+  // 8 API calls per minute per visitor and route (the old Express server allowed 8 per 15 min).
+  "ratelimits": [
+    { "name": "LIMITER", "namespace_id": "1001", "simple": { "limit": 8, "period": 60 } }
+  ],
+  // Public values; secrets go in the dashboard.
+  "vars": {
+    "SUPABASE_URL": "https://jxrobmaoouwycfhxpecn.supabase.co",
+    "SUPABASE_ANON_KEY": "sb_publishable_caddBtRzOnCefik_nfKpbw_zwJat5XN",
+    "SMTP_HOST": "smtps.udag.de",
+    "SMTP_PORT": "465",
+    "SMTP_USER": "info@digital-future.ai",
+    "MAIL_FROM": "SakanVIP <info@digital-future.ai>",
+    "MAIL_TO_INFO": "info@digital-future.ai",
+    "MAIL_TO_SERVER": "server@digital-future.ai",
+    "PAYPAL_MODE": "live"
+  },
+  "observability": { "enabled": true }
+}
