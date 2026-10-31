@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
  id INTEGER PRIMARY KEY,
  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
  confirmed_at TEXT,
+ confirmation_hash TEXT,
+ confirmation_expires INTEGER,
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `);
@@ -53,9 +55,10 @@ const emailOk=value=>typeof value==='string' && value.length<=254 && /^[^\s@]+@[
 const tokenHash=token=>crypto.createHash('sha256').update(token).digest('hex');
 const userByEmail=db.prepare('SELECT id FROM users WHERE email=? COLLATE NOCASE');
 const createUser=db.prepare('INSERT INTO users(email,password_hash,verification_hash,verification_expires) VALUES(?,?,?,?)');
-const createSubscription=db.prepare('INSERT INTO subscriptions(email) VALUES(?) ON CONFLICT(email) DO NOTHING');
-const addSubscription=db.prepare('INSERT INTO subscriptions(email,confirmed_at) VALUES(?,CURRENT_TIMESTAMP) ON CONFLICT(email) DO UPDATE SET confirmed_at=CURRENT_TIMESTAMP');
+const createSubscription=db.prepare('INSERT INTO subscriptions(email,confirmation_hash,confirmation_expires) VALUES(?,?,?) ON CONFLICT(email) DO UPDATE SET confirmation_hash=excluded.confirmation_hash,confirmation_expires=excluded.confirmation_expires,confirmed_at=NULL');
+const confirmSubscription=db.prepare('UPDATE subscriptions SET confirmed_at=CURRENT_TIMESTAMP,confirmation_hash=NULL,confirmation_expires=NULL WHERE confirmation_hash=? AND confirmation_expires>?');
 const updateVerified=db.prepare('UPDATE users SET verified_at=CURRENT_TIMESTAMP,verification_hash=NULL,verification_expires=NULL WHERE verification_hash=? AND verification_expires>?');
+const findUserByVerification=db.prepare('SELECT email FROM users WHERE verification_hash=? AND verification_expires>?');
 const publicApi=process.env.PUBLIC_API_URL.replace(/\/$/,'');
 const from=process.env.MAIL_FROM;
 const info=process.env.MAIL_TO_INFO || 'info@digital-future.ai';
@@ -70,11 +73,14 @@ app.post('/api/register',limiter,async(req,res)=>{
  if(userByEmail.get(email)) return res.status(409).json({error:'Für diese E-Mail-Adresse besteht bereits ein Konto. Bitte prüfen Sie Ihr Postfach.'});
  const token=crypto.randomBytes(32).toString('base64url');
  const hash=tokenHash(token);
+ const newsletterToken=newsletter?crypto.randomBytes(32).toString('base64url'):null;
+ const newsletterHash=newsletterToken?tokenHash(newsletterToken):null;
  const passwordHash=await bcrypt.hash(password,12);
  try {
   createUser.run(email,passwordHash,hash,Date.now()+24*60*60*1000);
-  if(newsletter) createSubscription.run(email);
+  if(newsletter) createSubscription.run(email,newsletterHash,Date.now()+24*60*60*1000);
   const link=publicApi+'/api/verify?token='+encodeURIComponent(token);
+  const newsletterLink=newsletterToken?publicApi+'/api/verify?type=newsletter&token='+encodeURIComponent(newsletterToken):null;
   await mailer.sendMail({from,to:email,replyTo:info,subject:'Bitte bestätigen Sie Ihre SakanVIP Registrierung',text:`Vielen Dank für Ihre Registrierung bei SakanVIP. Bitte bestätigen Sie Ihre E-Mail-Adresse innerhalb von 24 Stunden: ${link}\n\nFalls Sie diese Registrierung nicht angefordert haben, ignorieren Sie diese Nachricht.`,html:`<div style="font-family:Arial,sans-serif;background:#100e17;color:#f3e5ab;padding:32px"><h1 style="color:#d4af37">SAKANVIP</h1><p>Vielen Dank für Ihre Registrierung.</p><p><a href="${link}" style="display:inline-block;padding:14px 22px;background:#d4af37;color:#100e17;text-decoration:none;border-radius:24px">E-Mail-Adresse bestätigen</a></p><p>Der Link ist 24 Stunden gültig. Falls Sie diese Registrierung nicht angefordert haben, ignorieren Sie diese Nachricht.</p></div>`});
   res.status(202).json({ok:true,message:'confirmation_sent'});
  } catch(err) {
@@ -87,6 +93,7 @@ app.post('/api/register',limiter,async(req,res)=>{
 app.get('/api/verify',limiter,(req,res)=>{
  const token=String(req.query.token||'');
  if(!/^[A-Za-z0-9_-]{40,60}$/.test(token)) return res.status(400).send('Ungültiger oder abgelaufener Bestätigungslink.');
+ if(req.query.type==='newsletter') { const sub=confirmSubscription.run(tokenHash(token),Date.now()); if(!sub.changes) return res.status(400).send('Der Newsletter-Bestätigungslink ist ungültig oder abgelaufen.'); return res.type('html').send('<!doctype html><html lang="de"><meta charset="utf-8"><body style="background:#100e17;color:#f3e5ab;font:18px Arial;padding:10vh 8vw"><h1 style="color:#d4af37">SAKANVIP</h1><p>Ihre VIP-Newsletter-Anmeldung wurde bestätigt.</p></body></html>'); }
  const result=updateVerified.run(tokenHash(token),Date.now());
  if(!result.changes) return res.status(400).send('Der Bestätigungslink ist ungültig oder abgelaufen. Bitte registrieren Sie sich erneut.');
  res.type('html').send('<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>SakanVIP bestätigt</title><body style="background:#100e17;color:#f3e5ab;font:18px Arial;padding:10vh 8vw"><h1 style="color:#d4af37">SAKANVIP</h1><p>Ihre E-Mail-Adresse wurde bestätigt. Ihre Registrierung ist abgeschlossen.</p><a style="color:#d4af37" href="https://sakan-app.github.io/sakanvip/">Zum Shop</a></body></html>');
@@ -96,8 +103,10 @@ app.post('/api/subscribe',limiter,async(req,res)=>{
  const email=String(req.body?.email||'').trim().toLowerCase();
  if(!emailOk(email)) return res.status(400).json({error:'Bitte geben Sie eine gültige E-Mail-Adresse ein.'});
  try {
-  createSubscription.run(email);
-  await mailer.sendMail({from,to:email,replyTo:info,subject:'SakanVIP – Newsletter-Anfrage erhalten',text:'Vielen Dank für Ihr Interesse am SakanVIP Newsletter. Bitte antworten Sie auf diese E-Mail, falls Sie diese Anfrage nicht gestellt haben.'});
+  const token=crypto.randomBytes(32).toString('base64url');
+  createSubscription.run(email,tokenHash(token),Date.now()+24*60*60*1000);
+  const link=publicApi+'/api/verify?type=newsletter&token='+encodeURIComponent(token);
+  await mailer.sendMail({from,to:email,replyTo:info,subject:'SakanVIP – Bitte Newsletter-Anmeldung bestätigen',text:'Bitte bestätigen Sie Ihre freiwillige VIP-Newsletter-Anmeldung innerhalb von 24 Stunden: '+link});
   res.status(202).json({ok:true});
  } catch(err){console.error('Subscription dispatch failed:',err.message);res.status(503).json({error:'Die E-Mail konnte momentan nicht versendet werden.'});}
 });
