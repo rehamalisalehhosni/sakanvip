@@ -240,8 +240,8 @@ document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',
 document.querySelectorAll('[data-modal]').forEach(b=>b.addEventListener('click',()=>openModal(b.dataset.modal)));
 document.querySelectorAll('.modal-backdrop').forEach(back=>back.addEventListener('click',e=>{if(e.target===back)closeModal(back.id)}));
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.modal-backdrop.open').forEach(x=>closeModal(x.id));$('cartDrawer').classList.remove('open');$('cartDrawer').setAttribute('aria-hidden','true')}});
-$('search').addEventListener('keydown',e=>{if(e.key!=='Enter')return;const q=e.target.value.trim().toLocaleLowerCase();const c=categories.find(x=>Object.values(x).some(v=>typeof v==='string'&&v.toLocaleLowerCase().includes(q)));if(c)openCategory(c);else if(q)makeGrid($('categoryGrid'),20,'Suchergebnis: '+q),$('categoryTitle').textContent='Suchergebnisse', $('womenSection').classList.add('hidden'),$('menSection').classList.add('hidden'),$('categoryView').classList.remove('hidden')});
-renderNav();renderTiles();makeGrid($('womenGrid'),9,label(categories[2]));makeGrid($('menGrid'),9,label(categories[9]));updateCart();
+$('search').addEventListener('keydown',e=>{if(e.key!=='Enter')return;const q=e.target.value.trim().toLocaleLowerCase();const c=categories.find(x=>Object.values(x).some(v=>typeof v==='string'&&v.toLocaleLowerCase().includes(q)));if(c)openCategory(c);else if(q)makeGrid($('categoryGrid'),9,'Suchergebnis: '+q),$('categoryTitle').textContent='Suchergebnisse', $('womenSection').classList.add('hidden'),$('menSection').classList.add('hidden'),$('categoryView').classList.remove('hidden')});
+renderNav();renderTiles();makeGrid($('womenGrid'),9,label(categories[2]));makeGrid($('menGrid'),9,label(categories[10]));updateCart();
 })();
 </script>
 </body>
