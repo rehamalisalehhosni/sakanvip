@@ -2,9 +2,9 @@
 // Safe to re-run: products are keyed by supplier_product_id and updated in place.
 // Usage: DATABASE_URL=... CJ_ACCESS_TOKEN=... node scripts/import-cj-products.mjs [perCategory] [--hide-cheap]
 //        DATABASE_URL=... node scripts/import-cj-products.mjs --reprice   (recalculate stored prices only)
-// Pricing: sale price = supplier price + MARKUP_PERCENT (default 150%, i.e. supplier price x 2.5),
-// rounded to a .99 ending that never falls below that minimum, and at least MIN_PRICE (default 19.99)
-// so low-cost items still cover shipping and payment fees.
+// Pricing follows the pricing sheet: sale price = supplier price x 2.5 (MARKUP_PERCENT 150), e.g.
+// 100 -> 250.00, covering shipping 16%, payment 8%, servers 6%, marketing 30%, taxes 30% and 60%
+// net profit of the supplier price. At least MIN_PRICE (default 19.99) as a safety floor.
 import pg from 'pg';
 
 const REPRICE_ONLY = process.argv.includes('--reprice');
@@ -20,12 +20,14 @@ const SEARCHES = [
   { category: 'evening', keyword: 'evening gown' },
   { category: 'perfume', keyword: 'perfume' },
   { category: 'watches', keyword: 'luxury watch' },
-  { category: 'gifts', keyword: 'gift box set' },
+  { category: 'gifts', keyword: 'jewelry gift box' },
   { category: 'accessories', keyword: 'sunglasses' },
   { category: 'bags', keyword: 'women handbag' },
   { category: 'jewelry', keyword: 'necklace' },
   { category: 'men', keyword: 'men shirt' },
   // Extra searches for categories where few CJ products reach MIN_SUPPLIER_PRICE.
+  { category: 'gifts', keyword: 'watch gift set' },
+  { category: 'gifts', keyword: 'perfume gift set' },
   { category: 'perfume', keyword: 'perfume women' },
   { category: 'perfume', keyword: 'perfume men' },
   { category: 'accessories', keyword: 'leather belt' },
@@ -46,12 +48,9 @@ const firstNumber = value => {
 };
 const MARKUP_PERCENT = Number(process.env.MARKUP_PERCENT ?? 150);
 const MIN_PRICE = Number(process.env.MIN_PRICE ?? 19.99);
-const retailPrice = supplierPrice => {
-  const minimum = supplierPrice * (1 + MARKUP_PERCENT / 100);
-  let price = Math.floor(minimum) + 0.99;
-  if (price < minimum) price += 1;
-  return Number(Math.max(price, MIN_PRICE).toFixed(2));
-};
+// Calculated in whole cents so x.xx5 rounds up exactly (10.87 x 2.5 = 27.175 -> 27.18).
+const retailPrice = supplierPrice =>
+  Math.max(Math.round(Math.round(supplierPrice * 100) * (100 + MARKUP_PERCENT) / 100) / 100, MIN_PRICE);
 
 async function productDetail(pid) {
   const url = new URL('https://developers.cjdropshipping.com/api2.0/v1/product/query');
