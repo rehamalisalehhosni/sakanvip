@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import Stripe from 'stripe';
 import fs from 'node:fs';
 import path from 'node:path';
+import { callCjTool, listCjTools } from './cj-mcp.js';
 
 const required = ['SMTP_HOST','SMTP_PORT','SMTP_USER','SMTP_PASS','MAIL_FROM','PUBLIC_API_URL','ALLOWED_ORIGIN'];
 for (const key of required) if (!process.env[key]) throw new Error(`Missing required environment variable: ${key}`);
@@ -45,6 +46,16 @@ const paypalBase = process.env.PAYPAL_MODE === 'live' ? 'https://api-m.paypal.co
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
 const paypalReady = Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
+const euCountries=new Set(['DE','AT','BE','BG','HR','CY','CZ','DK','EE','ES','FI','FR','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','SE']);
+function validateShipping(input){
+ const name=String(input?.name||'').trim().slice(0,120);
+ const street=String(input?.street||'').trim().slice(0,200);
+ const city=String(input?.city||'').trim().slice(0,120);
+ const postalCode=String(input?.postalCode||'').trim().slice(0,24);
+ const country=String(input?.country||'DE').trim().toUpperCase();
+ if(!street||!city||!postalCode||!euCountries.has(country)) throw new Error('Versandadresse ungültig.');
+ return {name,street,city,postalCode,country};
+}
 async function trustedCart(items) {
  if (!Array.isArray(items) || !items.length || items.length > 50) throw new Error('Warenkorb ungültig.');
  if (!supabaseUrl || !supabaseAnonKey) throw new Error('Produktdatenbank ist nicht konfiguriert.');
@@ -70,7 +81,7 @@ async function paypalAccessToken(){
 \nconst app = express();
 app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json({ limit: '12kb' }));
+app.use(express.json({ limit: '1mb', verify:(req,res,buf)=>{if(req.originalUrl==='/api/payments/stripe/webhook')req.rawBody=Buffer.from(buf)} }));
 app.use((req,res,next)=>{
  const origin=req.get('origin');
  if(origin && origin!==process.env.ALLOWED_ORIGIN) return res.status(403).json({error:'Origin not allowed'});
@@ -78,6 +89,24 @@ app.use((req,res,next)=>{
  if(req.method==='OPTIONS') return res.sendStatus(204);
  next();
 });
+const cjAdminToken = process.env.CJ_MCP_ADMIN_TOKEN || '';
+function requireCjAdmin(req,res,next){
+ const supplied=String(req.get('authorization')||'').replace(/^Bearer\s+/i,'');
+ const a=Buffer.from(supplied); const b=Buffer.from(cjAdminToken);
+ if(!cjAdminToken || !supplied || a.length!==b.length || !crypto.timingSafeEqual(a,b)) return res.status(401).json({error:'Unauthorized'});
+ next();
+}
+app.get('/api/cj/status',requireCjAdmin,async(req,res)=>{
+ try{const tools=await listCjTools();res.json({configured:true,tools:tools.map(t=>({name:t.name,description:t.description||''}))});}
+ catch(err){console.error('CJ MCP connection failed:',err.message);res.status(503).json({error:'CJ MCP connection unavailable.'});}
+});
+app.post('/api/cj/read-tool',requireCjAdmin,async(req,res)=>{
+ const name=String(req.body?.name||'');
+ if(!['search_products','query_sku_details','get_warehouses','calculate_freight'].includes(name)) return res.status(400).json({error:'Tool is not enabled for this read-only endpoint.'});
+ try{const result=await callCjTool(name,req.body?.arguments||{});res.json({result});}
+ catch(err){console.error('CJ MCP tool failed:',name,err.message);res.status(502).json({error:'CJ tool request failed.'});}
+});
+
 const limiter=rateLimit({windowMs:15*60*1000,limit:8,standardHeaders:true,legacyHeaders:false,message:{error:'Zu viele Versuche. Bitte später erneut versuchen.'}});
 const mailer=nodemailer.createTransport({host:process.env.SMTP_HOST,port:smtpPort,secure, requireTLS:!secure,auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS},tls:{minVersion:'TLSv1.2'}});
 const emailOk=value=>typeof value==='string' && value.length<=254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -151,22 +180,46 @@ app.post('/api/contact',limiter,async(req,res)=>{
 });
 
 
+app.post('/api/payments/stripe/webhook',async(req,res)=>{
+ if(!stripe||!process.env.STRIPE_WEBHOOK_SECRET)return res.status(503).send('Stripe webhook is not configured.');
+ const signature=req.get('stripe-signature');
+ if(!signature||!req.rawBody)return res.status(400).send('Missing Stripe signature or raw request body.');
+ let event;
+ try{event=stripe.webhooks.constructEvent(req.rawBody,signature,process.env.STRIPE_WEBHOOK_SECRET);}
+ catch(err){console.error('Stripe webhook signature verification failed:',err.message);return res.status(400).send('Invalid Stripe signature.');}
+ switch(event.type){
+  case 'checkout.session.completed':
+  case 'checkout.session.async_payment_succeeded':
+   console.log('Stripe payment completed:',event.data.object.id,event.data.object.payment_status);
+   break;
+  case 'checkout.session.async_payment_failed':
+   console.warn('Stripe asynchronous payment failed:',event.data.object.id);
+   break;
+  default:
+   console.log('Stripe webhook event received:',event.type);
+ }
+ res.json({received:true});
+});
 app.post('/api/payments/stripe/session',limiter,async(req,res)=>{
  if(!stripe)return res.status(503).json({error:'Stripe ist noch nicht konfiguriert.'});
  try{
   const items=await trustedCart(req.body?.items);
+  const shipping=validateShipping(req.body?.shipping);
   const line_items=items.map(({product,quantity})=>({quantity,price_data:{currency:'eur',unit_amount:Math.round(Number(product.price)*100),product_data:{name:product.name}}}));
-  const session=await stripe.checkout.sessions.create({mode:'payment',line_items,success_url:process.env.CHECKOUT_SUCCESS_URL||'https://sakan-app.github.io/sakanvip/?payment=success',cancel_url:process.env.CHECKOUT_CANCEL_URL||'https://sakan-app.github.io/sakanvip/?payment=cancel'});
-  res.json({url:session.url,id:session.id});
- }catch(err){console.error('Stripe checkout error:',err.message);res.status(400).json({error:'Stripe-Checkout konnte nicht gestartet werden.'});}
+  const address={line1:shipping.street,city:shipping.city,postal_code:shipping.postalCode,country:shipping.country};
+  const metadata={shipping_street:shipping.street,shipping_city:shipping.city,shipping_postal_code:shipping.postalCode,shipping_country:shipping.country};
+  const session=await stripe.checkout.sessions.create({mode:'payment',currency:'eur',line_items,billing_address_collection:'required',shipping_address_collection:{allowed_countries:['DE','AT','BE','BG','HR','CY','CZ','DK','EE','ES','FI','FR','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','SE']},payment_intent_data:{shipping:{name:shipping.name||'SAKANVIP Customer',address},metadata},metadata,success_url:process.env.CHECKOUT_SUCCESS_URL||'https://sakan-app.github.io/sakanvip/?payment=success',cancel_url:process.env.CHECKOUT_CANCEL_URL||'https://sakan-app.github.io/sakanvip/?payment=cancel'});
+  res.json({url:session.url,id:session.id,currency:'EUR'});
+ }catch(err){console.error('Stripe checkout error:',err.message);res.status(400).json({error:err.message==='Versandadresse ungültig.'?err.message:'Stripe-Checkout konnte nicht gestartet werden.'});}
 });
 app.post('/api/payments/paypal/order',limiter,async(req,res)=>{
  if(!paypalReady)return res.status(503).json({error:'PayPal ist noch nicht konfiguriert.'});
  try{
   const items=await trustedCart(req.body?.items);
+  const shipping=validateShipping(req.body?.shipping);
   const total=items.reduce((sum,x)=>sum+Number(x.product.price)*x.quantity,0);
   const token=await paypalAccessToken();
-  const response=await fetch(paypalBase+'/v2/checkout/orders',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','PayPal-Request-Id':crypto.randomUUID()},body:JSON.stringify({intent:'CAPTURE',purchase_units:[{amount:{currency_code:'EUR',value:total.toFixed(2),breakdown:{item_total:{currency_code:'EUR',value:total.toFixed(2)}}},items:items.map(({product,quantity})=>({name:String(product.name).slice(0,127),quantity:String(quantity),unit_amount:{currency_code:'EUR',value:Number(product.price).toFixed(2)}}))}],application_context:{return_url:process.env.CHECKOUT_SUCCESS_URL||'https://sakan-app.github.io/sakanvip/?payment=paypal-approved',cancel_url:process.env.CHECKOUT_CANCEL_URL||'https://sakan-app.github.io/sakanvip/?payment=cancel'}})});
+  const response=await fetch(paypalBase+'/v2/checkout/orders',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','PayPal-Request-Id':crypto.randomUUID()},body:JSON.stringify({intent:'CAPTURE',purchase_units:[{shipping:{name:{full_name:shipping.name||'SAKANVIP Customer'},address:{address_line_1:shipping.street,admin_area_2:shipping.city,postal_code:shipping.postalCode,country_code:shipping.country}},amount:{currency_code:'EUR',value:total.toFixed(2),breakdown:{item_total:{currency_code:'EUR',value:total.toFixed(2)}}},items:items.map(({product,quantity})=>({name:String(product.name).slice(0,127),quantity:String(quantity),unit_amount:{currency_code:'EUR',value:Number(product.price).toFixed(2)}}))}],application_context:{return_url:process.env.CHECKOUT_SUCCESS_URL||'https://sakan-app.github.io/sakanvip/?payment=paypal-approved',cancel_url:process.env.CHECKOUT_CANCEL_URL||'https://sakan-app.github.io/sakanvip/?payment=cancel'}})});
   const data=await response.json();if(!response.ok)throw new Error(data.message||'PayPal order create failed');
   const approval=data.links?.find(x=>x.rel==='approve')?.href;if(!approval)throw new Error('PayPal approval URL missing');
   res.json({id:data.id,url:approval});
