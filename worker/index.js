@@ -3,8 +3,12 @@
 // Supabase (auth + cart_items), so the old SQLite register/verify/subscribe routes are not needed.
 import Stripe from 'stripe';
 import { WorkerMailer } from 'worker-mailer';
+import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const EU_COUNTRIES = ['DE', 'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'ES', 'FI', 'FR', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'SE'];
+const CJ_READ_TOOLS = ['search_products', 'query_sku_details', 'get_warehouses', 'calculate_freight'];
 const emailOk = value => typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 const json = (body, status = 200, headers = {}) =>
@@ -16,6 +20,31 @@ class UserError extends Error {}
 function parseAddress(value) {
   const match = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(value || '');
   return match ? { name: match[1].replace(/^"|"$/g, ''), email: match[2] } : { email: String(value || '').trim() };
+}
+
+function validateShipping(input) {
+  const name = String(input?.name || '').trim().slice(0, 120);
+  const street = String(input?.street || '').trim().slice(0, 200);
+  const city = String(input?.city || '').trim().slice(0, 120);
+  const postalCode = String(input?.postalCode || '').trim().slice(0, 24);
+  const country = String(input?.country || 'DE').trim().toUpperCase();
+  if (!street || !city || !postalCode || !EU_COUNTRIES.includes(country)) throw new UserError('Versandadresse ungültig.');
+  return { name, street, city, postalCode, country };
+}
+
+// Constant-time comparison of two strings.
+async function safeEqual(a, b) {
+  const enc = new TextEncoder();
+  const [x, y] = await Promise.all([crypto.subtle.digest('SHA-256', enc.encode(a)), crypto.subtle.digest('SHA-256', enc.encode(b))]);
+  return crypto.subtle.timingSafeEqual(x, y) && a.length === b.length;
+}
+
+async function withCjClient(env, fn) {
+  if (!env.CJ_MCP_TOKEN) throw new Error('CJ_MCP_TOKEN is not configured');
+  const client = new McpClient({ name: 'sakanvip-backend', version: '1.0.0' });
+  const transport = new StreamableHTTPClientTransport(new URL('https://developers.cjdropshipping.com/mcp/' + encodeURIComponent(env.CJ_MCP_TOKEN)));
+  try { await client.connect(transport); return await fn(client); }
+  finally { try { await transport.close(); } catch {} }
 }
 
 async function trustedCart(env, items) {
@@ -88,16 +117,24 @@ async function stripeSession(env, body, origin) {
   if (!env.STRIPE_SECRET_KEY) return json({ error: 'Stripe ist noch nicht konfiguriert.' }, 503);
   try {
     const items = await trustedCart(env, body?.items);
+    const shipping = validateShipping(body?.shipping);
+    const address = { line1: shipping.street, city: shipping.city, postal_code: shipping.postalCode, country: shipping.country };
+    const metadata = { shipping_street: shipping.street, shipping_city: shipping.city, shipping_postal_code: shipping.postalCode, shipping_country: shipping.country };
     const stripe = new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient() });
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
+      currency: 'eur',
       line_items: items.map(({ product, quantity }) => ({
         quantity, price_data: { currency: 'eur', unit_amount: Math.round(Number(product.price) * 100), product_data: { name: product.name } }
       })),
+      billing_address_collection: 'required',
+      shipping_address_collection: { allowed_countries: EU_COUNTRIES },
+      payment_intent_data: { shipping: { name: shipping.name || 'SAKANVIP Customer', address }, metadata },
+      metadata,
       success_url: env.CHECKOUT_SUCCESS_URL || `${origin}/?payment=success`,
       cancel_url: env.CHECKOUT_CANCEL_URL || `${origin}/?payment=cancel`
     });
-    return json({ url: session.url, id: session.id });
+    return json({ url: session.url, id: session.id, currency: 'EUR' });
   } catch (err) {
     console.error('Stripe checkout error:', err.message);
     return json({ error: err instanceof UserError ? err.message : 'Stripe-Checkout konnte nicht gestartet werden.' }, 400);
@@ -108,6 +145,7 @@ async function paypalOrder(env, body, origin) {
   if (!paypalReady(env)) return json({ error: 'PayPal ist noch nicht konfiguriert.' }, 503);
   try {
     const items = await trustedCart(env, body?.items);
+    const shipping = validateShipping(body?.shipping);
     const total = items.reduce((sum, x) => sum + Number(x.product.price) * x.quantity, 0);
     const token = await paypalAccessToken(env);
     const response = await fetch(paypalBase(env) + '/v2/checkout/orders', {
@@ -116,6 +154,10 @@ async function paypalOrder(env, body, origin) {
       body: JSON.stringify({
         intent: 'CAPTURE',
         purchase_units: [{
+          shipping: {
+            name: { full_name: shipping.name || 'SAKANVIP Customer' },
+            address: { address_line_1: shipping.street, admin_area_2: shipping.city, postal_code: shipping.postalCode, country_code: shipping.country }
+          },
           amount: { currency_code: 'EUR', value: total.toFixed(2), breakdown: { item_total: { currency_code: 'EUR', value: total.toFixed(2) } } },
           items: items.map(({ product, quantity }) => ({
             name: String(product.name).slice(0, 127), quantity: String(quantity),
@@ -159,6 +201,66 @@ async function paypalCapture(env, body) {
   }
 }
 
+// Stripe calls this server-to-server, so it has no Origin header and needs the raw body for the signature.
+async function stripeWebhook(env, request) {
+  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) return new Response('Stripe webhook is not configured.', { status: 503 });
+  const signature = request.headers.get('stripe-signature');
+  const raw = await request.text();
+  if (!signature || !raw) return new Response('Missing Stripe signature or raw request body.', { status: 400 });
+  const stripe = new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient() });
+  let event;
+  try {
+    event = await stripe.webhooks.constructEventAsync(raw, signature, env.STRIPE_WEBHOOK_SECRET, undefined, Stripe.createSubtleCryptoProvider());
+  } catch (err) {
+    console.error('Stripe webhook signature verification failed:', err.message);
+    return new Response('Invalid Stripe signature.', { status: 400 });
+  }
+  switch (event.type) {
+    case 'checkout.session.completed':
+    case 'checkout.session.async_payment_succeeded':
+      console.log('Stripe payment completed:', event.data.object.id, event.data.object.payment_status);
+      break;
+    case 'checkout.session.async_payment_failed':
+      console.warn('Stripe asynchronous payment failed:', event.data.object.id);
+      break;
+    default:
+      console.log('Stripe webhook event received:', event.type);
+  }
+  return json({ received: true });
+}
+
+// Read-only CJ MCP tools for the shop owner; protected by CJ_MCP_ADMIN_TOKEN.
+async function cjAdmin(env, request, pathname) {
+  const supplied = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!env.CJ_MCP_ADMIN_TOKEN || !supplied || !(await safeEqual(supplied, env.CJ_MCP_ADMIN_TOKEN))) return json({ error: 'Unauthorized' }, 401);
+  if (pathname === '/api/cj/status') {
+    if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405, { Allow: 'GET' });
+    try {
+      const { tools = [] } = await withCjClient(env, client => client.listTools());
+      return json({ configured: true, tools: tools.map(t => ({ name: t.name, description: t.description || '' })) });
+    } catch (err) {
+      console.error('CJ MCP connection failed:', err.message);
+      return json({ error: 'CJ MCP connection unavailable.' }, 503);
+    }
+  }
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'Ungültige Anfrage.' }, 400); }
+  const name = String(body?.name || '');
+  if (!CJ_READ_TOOLS.includes(name)) return json({ error: 'Tool is not enabled for this read-only endpoint.' }, 400);
+  try {
+    const result = await withCjClient(env, async client => {
+      const response = await client.callTool({ name, arguments: body?.arguments || {} });
+      if (response.isError) throw new Error('CJ MCP returned a tool error');
+      return response;
+    });
+    return json({ result });
+  } catch (err) {
+    console.error('CJ MCP tool failed:', name, err.message);
+    return json({ error: 'CJ tool request failed.' }, 502);
+  }
+}
+
 const routes = {
   '/api/contact': (env, body) => contact(env, body),
   '/api/payments/stripe/session': stripeSession,
@@ -170,6 +272,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ ok: true });
+    if (url.pathname === '/api/payments/stripe/webhook') {
+      return request.method === 'POST' ? stripeWebhook(env, request) : json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
+    }
+    if (url.pathname === '/api/cj/status' || url.pathname === '/api/cj/read-tool') return cjAdmin(env, request, url.pathname);
     const handler = routes[url.pathname];
     if (!handler) return url.pathname.startsWith('/api/') ? json({ error: 'Not found' }, 404) : env.ASSETS.fetch(request);
 

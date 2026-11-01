@@ -9,6 +9,8 @@ SakanVIP storefront. Runs on **Cloudflare Workers**: one Worker serves the stati
 | `POST /api/payments/stripe/session` | Creates a Stripe Checkout session; prices re-checked in Supabase |
 | `POST /api/payments/paypal/order` | Creates a PayPal order; prices re-checked in Supabase |
 | `POST /api/payments/paypal/capture` | Captures an approved PayPal order |
+| `POST /api/payments/stripe/webhook` | Stripe events (signature-checked) |
+| `GET /api/cj/status`, `POST /api/cj/read-tool` | Read-only CJ MCP tools for the owner (needs `CJ_MCP_ADMIN_TOKEN`) |
 | `GET /health` | Health check |
 
 Accounts, login and carts use Supabase directly from the page (`supabase/schema.sql`).
@@ -39,6 +41,8 @@ Public settings are in `wrangler.jsonc` (`vars`). Add these in the Worker's
 | `SMTP_PASS` | Contact form email (UDAG mailbox password for `info@digital-future.ai`) |
 | `STRIPE_SECRET_KEY` | Stripe Checkout |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | PayPal checkout |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook (`whsec_…` from the Stripe endpoint for `/api/payments/stripe/webhook`) |
+| `CJ_MCP_TOKEN`, `CJ_MCP_ADMIN_TOKEN` | CJ MCP admin endpoints |
 
 Optional: `CHECKOUT_SUCCESS_URL`, `CHECKOUT_CANCEL_URL` (default: the site's own address).
 In Supabase → Authentication → URL Configuration, set the Site URL and add the Worker
