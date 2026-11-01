@@ -1,6 +1,6 @@
 // Fills the Supabase `products` table with CJ Dropshipping products for each storefront category.
 // Safe to re-run: products are keyed by supplier_product_id and updated in place.
-// Usage: DATABASE_URL=... CJ_ACCESS_TOKEN=... node scripts/import-cj-products.mjs [perCategory]
+// Usage: DATABASE_URL=... CJ_ACCESS_TOKEN=... node scripts/import-cj-products.mjs [perCategory] [--hide-cheap]
 //        DATABASE_URL=... node scripts/import-cj-products.mjs --reprice   (recalculate stored prices only)
 // Pricing: sale price = supplier price + MARKUP_PERCENT (default 150%, i.e. supplier price x 2.5),
 // rounded to a .99 ending that never falls below that minimum, and at least MIN_PRICE (default 19.99)
@@ -9,6 +9,11 @@ import pg from 'pg';
 
 const REPRICE_ONLY = process.argv.includes('--reprice');
 const PER_CATEGORY = Number(process.argv.find(a => /^\d+$/.test(a)) || 12);
+// Only import products whose supplier price is at least this (USD), to keep quality consistent with
+// the brand. With --hide-cheap, active products below it are hidden (active = false, not deleted).
+const MIN_SUPPLIER_PRICE = Number(process.env.MIN_SUPPLIER_PRICE ?? 8);
+const HIDE_CHEAP = process.argv.includes('--hide-cheap');
+const MAX_PAGES = 3;
 // Category ids must match the `categories` ids in index.html (the page filters on them).
 const SEARCHES = [
   { category: 'women', keyword: 'women dress' },
@@ -19,7 +24,13 @@ const SEARCHES = [
   { category: 'accessories', keyword: 'sunglasses' },
   { category: 'bags', keyword: 'women handbag' },
   { category: 'jewelry', keyword: 'necklace' },
-  { category: 'men', keyword: 'men shirt' }
+  { category: 'men', keyword: 'men shirt' },
+  // Extra searches for categories where few CJ products reach MIN_SUPPLIER_PRICE.
+  { category: 'perfume', keyword: 'perfume women' },
+  { category: 'perfume', keyword: 'perfume men' },
+  { category: 'accessories', keyword: 'leather belt' },
+  { category: 'accessories', keyword: 'silk scarf' },
+  { category: 'accessories', keyword: 'leather wallet' }
 ];
 
 const { DATABASE_URL, CJ_ACCESS_TOKEN } = process.env;
@@ -51,10 +62,10 @@ async function productDetail(pid) {
   return body.data;
 }
 
-async function search(keyword) {
+async function search(keyword, page = 1) {
   const url = new URL('https://developers.cjdropshipping.com/api2.0/v1/product/listV2');
-  url.searchParams.set('page', '1');
-  url.searchParams.set('size', '50');
+  url.searchParams.set('page', String(page));
+  url.searchParams.set('size', '100');
   url.searchParams.set('keyWord', keyword);
   const response = await fetch(url, { headers: { 'CJ-Access-Token': CJ_ACCESS_TOKEN } });
   const body = await response.json();
@@ -83,29 +94,48 @@ if (REPRICE_ONLY) {
 }
 
 let total = 0;
+const perCategory = {};
 for (const [index, { category, keyword }] of SEARCHES.entries()) {
+  const wanted = PER_CATEGORY - (perCategory[category] || 0);
+  if (wanted <= 0) continue;
   if (index > 0) await sleep(1200); // CJ allows ~1 request per second
-  const picked = (await search(keyword))
-    .map(p => ({ id: String(p.id || ''), name: String(p.nameEn || '').replace(/\s+/g, ' ').trim(), price: firstNumber(p.sellPrice), image: p.bigImage }))
-    .filter(p => p.id && p.name && /^[\x20-\x7E -ɏ]+$/.test(p.name) && p.price && /^https:\/\//.test(p.image || ''))
-    .slice(0, PER_CATEGORY);
+  const picked = [];
+  for (let page = 1; page <= MAX_PAGES && picked.length < wanted; page++) {
+    if (page > 1) await sleep(1200);
+    const items = (await search(keyword, page))
+      .map(p => ({ id: String(p.id || ''), name: String(p.nameEn || '').replace(/\s+/g, ' ').trim(), price: firstNumber(p.sellPrice), image: p.bigImage }))
+      .filter(p => p.id && p.name && /^[\x20-\x7E -ɏ]+$/.test(p.name) && p.price >= MIN_SUPPLIER_PRICE && /^https:\/\//.test(p.image || ''));
+    for (const p of items) if (picked.length < wanted && !picked.some(x => x.id === p.id)) picked.push(p);
+    if (!items.length && page > 1) break;
+  }
   for (const p of picked) {
     await client.query(
       `INSERT INTO public.products (name, category, description, price, image_url, active, supplier_product_id, supplier_price)
        VALUES ($1, $2, $3, $4, $5, true, $6, $7)
        ON CONFLICT (supplier_product_id) DO UPDATE SET name = EXCLUDED.name, category = EXCLUDED.category,
-         price = EXCLUDED.price, supplier_price = EXCLUDED.supplier_price, image_url = EXCLUDED.image_url, updated_at = now()`,
+         price = EXCLUDED.price, supplier_price = EXCLUDED.supplier_price, image_url = EXCLUDED.image_url, active = true, updated_at = now()`,
       [p.name.slice(0, 200), category, `SAKANVIP · ${p.name}`.slice(0, 500), retailPrice(p.price), p.image, `cj-${p.id}`, p.price]
     );
   }
   total += picked.length;
+  perCategory[category] = (perCategory[category] || 0) + picked.length;
   console.log(`${category}: ${picked.length} products ("${keyword}")`);
 }
 
-// Products imported earlier that this run's searches did not return: re-read their supplier price
-// from CJ so every product follows the same pricing rule.
+let hidden = 0;
+if (HIDE_CHEAP) {
+  const result = await client.query(
+    'UPDATE public.products SET active = false, updated_at = now() WHERE active AND supplier_price < $1',
+    [MIN_SUPPLIER_PRICE]
+  );
+  hidden = result.rowCount;
+  console.log(`Hidden ${hidden} active products with supplier price below ${MIN_SUPPLIER_PRICE}.`);
+}
+
+// Active products imported earlier that this run's searches did not return: re-read their supplier
+// price from CJ so every product follows the same pricing rule.
 const { rows: stale } = await client.query(
-  'SELECT id, supplier_product_id FROM public.products WHERE supplier_product_id LIKE $1 AND updated_at < $2',
+  'SELECT id, supplier_product_id FROM public.products WHERE active AND supplier_product_id LIKE $1 AND updated_at < $2',
   ['cj-%', runStarted]
 );
 let repriced = 0;
