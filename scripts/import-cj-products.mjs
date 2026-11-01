@@ -1,11 +1,14 @@
 // Fills the Supabase `products` table with CJ Dropshipping products for each storefront category.
 // Safe to re-run: products are keyed by supplier_product_id and updated in place.
 // Usage: DATABASE_URL=... CJ_ACCESS_TOKEN=... node scripts/import-cj-products.mjs [perCategory]
+//        DATABASE_URL=... node scripts/import-cj-products.mjs --reprice   (recalculate stored prices only)
 // Pricing: sale price = supplier price + MARKUP_PERCENT (default 150%, i.e. supplier price x 2.5),
-// rounded to a .99 ending that never falls below that minimum.
+// rounded to a .99 ending that never falls below that minimum, and at least MIN_PRICE (default 19.99)
+// so low-cost items still cover shipping and payment fees.
 import pg from 'pg';
 
-const PER_CATEGORY = Number(process.argv[2] || 12);
+const REPRICE_ONLY = process.argv.includes('--reprice');
+const PER_CATEGORY = Number(process.argv.find(a => /^\d+$/.test(a)) || 12);
 // Category ids must match the `categories` ids in index.html (the page filters on them).
 const SEARCHES = [
   { category: 'women', keyword: 'women dress' },
@@ -20,7 +23,7 @@ const SEARCHES = [
 ];
 
 const { DATABASE_URL, CJ_ACCESS_TOKEN } = process.env;
-if (!DATABASE_URL || !CJ_ACCESS_TOKEN) {
+if (!DATABASE_URL || (!CJ_ACCESS_TOKEN && !REPRICE_ONLY)) {
   console.error('Set DATABASE_URL and CJ_ACCESS_TOKEN.');
   process.exit(1);
 }
@@ -31,11 +34,12 @@ const firstNumber = value => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 const MARKUP_PERCENT = Number(process.env.MARKUP_PERCENT ?? 150);
+const MIN_PRICE = Number(process.env.MIN_PRICE ?? 19.99);
 const retailPrice = supplierPrice => {
   const minimum = supplierPrice * (1 + MARKUP_PERCENT / 100);
   let price = Math.floor(minimum) + 0.99;
   if (price < minimum) price += 1;
-  return Number(price.toFixed(2));
+  return Number(Math.max(price, MIN_PRICE).toFixed(2));
 };
 
 async function productDetail(pid) {
@@ -63,6 +67,20 @@ await client.connect();
 await client.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_product_id text UNIQUE');
 await client.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_price numeric(12,2)');
 const runStarted = new Date();
+
+if (REPRICE_ONLY) {
+  const { rows } = await client.query('SELECT id, supplier_price, price FROM public.products WHERE supplier_price IS NOT NULL');
+  let changed = 0;
+  for (const row of rows) {
+    const price = retailPrice(Number(row.supplier_price));
+    if (price === Number(row.price)) continue;
+    await client.query('UPDATE public.products SET price = $1, updated_at = now() WHERE id = $2', [price, row.id]);
+    changed++;
+  }
+  await client.end();
+  console.log(`Repriced ${changed} of ${rows.length} products (markup ${MARKUP_PERCENT}%, minimum ${MIN_PRICE}).`);
+  process.exit(0);
+}
 
 let total = 0;
 for (const [index, { category, keyword }] of SEARCHES.entries()) {
@@ -104,4 +122,4 @@ for (const row of stale) {
   }
 }
 await client.end();
-console.log(`Done: ${total} products imported or updated, ${repriced} of ${stale.length} older products repriced (markup ${MARKUP_PERCENT}%).`);
+console.log(`Done: ${total} products imported or updated, ${repriced} of ${stale.length} older products repriced (markup ${MARKUP_PERCENT}%, minimum ${MIN_PRICE}).`);
