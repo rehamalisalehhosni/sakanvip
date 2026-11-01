@@ -1,0 +1,19 @@
+{
+  "name": "sakanvip",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "stripe": "^23.1.0",
+    "worker-mailer": "^1.3.0"
+  },
+  "devDependencies": {
+    "pg": "^8.23.1",
+    "wrangler": "^4.156.0"
+  }
+}
