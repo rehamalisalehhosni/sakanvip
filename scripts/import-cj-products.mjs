@@ -5,6 +5,8 @@
 // Pricing follows the pricing sheet: sale price = supplier price x 2.5 (MARKUP_PERCENT 150), e.g.
 // 100 -> 250.00, covering shipping 16%, payment 8%, servers 6%, marketing 30%, taxes 30% and 60%
 // net profit of the supplier price. At least MIN_PRICE (default 19.99) as a safety floor.
+// CJ supplier prices are in USD; they are converted to EUR first with the ECB daily reference rate
+// (or USD_PER_EUR if set), so $100 at 1.1172 USD/EUR -> 89.51 EUR -> 223.78 EUR sale price.
 import pg from 'pg';
 
 const REPRICE_ONLY = process.argv.includes('--reprice');
@@ -13,6 +15,8 @@ const PER_CATEGORY = Number(process.argv.find(a => /^\d+$/.test(a)) || 12);
 // the brand. With --hide-cheap, active products below it are hidden (active = false, not deleted).
 const MIN_SUPPLIER_PRICE = Number(process.env.MIN_SUPPLIER_PRICE ?? 8);
 const HIDE_CHEAP = process.argv.includes('--hide-cheap');
+// Words in CJ product names that do not fit the storefront (CJ keyword search is broad).
+const EXCLUDED = /\b(knife|knives|baby|infant|toddler|tool ?(box|set)|set-?top|fishing|garden|kitchen)\b/i;
 const MAX_PAGES = 3;
 // Category ids must match the `categories` ids in index.html (the page filters on them).
 const SEARCHES = [
@@ -48,9 +52,19 @@ const firstNumber = value => {
 };
 const MARKUP_PERCENT = Number(process.env.MARKUP_PERCENT ?? 150);
 const MIN_PRICE = Number(process.env.MIN_PRICE ?? 19.99);
-// Calculated in whole cents so x.xx5 rounds up exactly (10.87 x 2.5 = 27.175 -> 27.18).
-const retailPrice = supplierPrice =>
-  Math.max(Math.round(Math.round(supplierPrice * 100) * (100 + MARKUP_PERCENT) / 100) / 100, MIN_PRICE);
+let USD_PER_EUR = Number(process.env.USD_PER_EUR) || null;
+async function loadExchangeRate() {
+  if (USD_PER_EUR) return;
+  const xml = await (await fetch('https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml')).text();
+  const rate = Number(/currency='USD' rate='([\d.]+)'/.exec(xml)?.[1]);
+  if (!(rate > 0)) throw new Error('Could not read the ECB USD rate; set USD_PER_EUR.');
+  USD_PER_EUR = rate;
+}
+// Supplier price (USD) -> EUR -> x2.5, in whole cents so x.xx5 rounds up exactly.
+const retailPrice = supplierPriceUsd => {
+  const eurCents = Math.round(supplierPriceUsd * 100 / USD_PER_EUR);
+  return Math.max(Math.round(eurCents * (100 + MARKUP_PERCENT) / 100) / 100, MIN_PRICE);
+};
 
 async function productDetail(pid) {
   const url = new URL('https://developers.cjdropshipping.com/api2.0/v1/product/query');
@@ -74,6 +88,8 @@ async function search(keyword, page = 1) {
 
 const client = new pg.Client({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 await client.connect();
+await loadExchangeRate();
+console.log(`Exchange rate: 1 EUR = ${USD_PER_EUR} USD`);
 await client.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_product_id text UNIQUE');
 await client.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_price numeric(12,2)');
 const runStarted = new Date();
@@ -103,7 +119,7 @@ for (const [index, { category, keyword }] of SEARCHES.entries()) {
     if (page > 1) await sleep(1200);
     const items = (await search(keyword, page))
       .map(p => ({ id: String(p.id || ''), name: String(p.nameEn || '').replace(/\s+/g, ' ').trim(), price: firstNumber(p.sellPrice), image: p.bigImage }))
-      .filter(p => p.id && p.name && /^[\x20-\x7E -ɏ]+$/.test(p.name) && p.price >= MIN_SUPPLIER_PRICE && /^https:\/\//.test(p.image || ''));
+      .filter(p => p.id && p.name && /^[\x20-\x7E -ɏ]+$/.test(p.name) && p.price >= MIN_SUPPLIER_PRICE && !EXCLUDED.test(p.name) && /^https:\/\//.test(p.image || ''));
     for (const p of items) if (picked.length < wanted && !picked.some(x => x.id === p.id)) picked.push(p);
     if (!items.length && page > 1) break;
   }
@@ -128,7 +144,12 @@ if (HIDE_CHEAP) {
     [MIN_SUPPLIER_PRICE]
   );
   hidden = result.rowCount;
-  console.log(`Hidden ${hidden} active products with supplier price below ${MIN_SUPPLIER_PRICE}.`);
+  const { rows: active } = await client.query('SELECT id, name FROM public.products WHERE active');
+  for (const row of active.filter(r => EXCLUDED.test(r.name || ''))) {
+    await client.query('UPDATE public.products SET active = false, updated_at = now() WHERE id = $1', [row.id]);
+    hidden++;
+  }
+  console.log(`Hidden ${hidden} active products (supplier price below ${MIN_SUPPLIER_PRICE} or excluded words).`);
 }
 
 // Active products imported earlier that this run's searches did not return: re-read their supplier
