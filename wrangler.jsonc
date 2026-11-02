@@ -35,7 +35,7 @@
     "SHOP_LEGAL_NAME": "Ahmed Ismail Saed",
     "SHOP_ADDRESS": "Ehndorfer Str. 130|24537 Neumünster|Deutschland",
     "SHOP_TAX_ID": "",
-    "SHOP_VAT_RATE": "19"
+    "SHOP_VAT_RATE": "0"
   },
   "observability": { "enabled": true }
 }
