@@ -19,12 +19,14 @@ const PER_CATEGORY = Number(process.argv.find(a => /^\d+$/.test(a)) || 12);
 const MIN_SUPPLIER_PRICE = Number(process.env.MIN_SUPPLIER_PRICE ?? 8);
 const HIDE_CHEAP = process.argv.includes('--hide-cheap');
 const REFRESH_SHIPPING = process.argv.includes('--refresh-shipping');
+// --only=<category id>: import just that category (e.g. --only=scarves after adding a category to index.html).
+const ONLY = process.argv.find(a => a.startsWith('--only='))?.slice(7);
 const SHIP_TO = process.env.SHIP_TO || 'DE';
 // Words in CJ product names that do not fit the storefront (CJ keyword search is broad).
-const EXCLUDED = /\b(knife|knives|baby|infant|toddler|kids?|girls'?|pet|puppy|costume|halloween|cos|tool ?(box|set)|set-?top|fishing|garden|kitchen|car|climbing|lanyard|beads|machine|headset|workout)\b/i;
-// Categories whose products must name what they are (CJ returns watches, gadgets and clothes for "perfume").
+const EXCLUDED = /\b(knife|knives|baby|infant|toddler|kids?|child(ren)?'?s?|girls'?|pet|puppy|costume|halloween|cos|tool ?(box|set)|set-?top|fishing|garden|kitchen|car|climbing|lanyard|beads|machine|headset|workout|usb|heat(ed|ing)|mask)\b/i;
+// Categories whose products must name what they are (CJ keyword search also returns unrelated items).
 const CATEGORY_WORDS = {
-  perfume: /perfume|parfum|fragrance|eau de|cologne/i,
+  scarves: /^(?!.*\b(coat|jacket|sweater|suit|necklace)\b).*\b(scarf|scarves|shawl|stole)\b/i,
   watches: /watch/i,
   jewelry: /necklace|pendant|earring|bracelet|ring|jewel/i
 };
@@ -34,21 +36,20 @@ const MAX_PAGES = 3;
 const SEARCHES = [
   { category: 'women', keyword: 'women dress' },
   { category: 'evening', keyword: 'evening gown' },
-  { category: 'perfume', keyword: 'perfume' },
+  { category: 'scarves', keyword: 'silk scarf' },
   { category: 'watches', keyword: 'luxury watch' },
   { category: 'gifts', keyword: 'jewelry gift box' },
-  { category: 'accessories', keyword: 'sunglasses' },
+  { category: 'accessories', keyword: 'leather belt' },
   { category: 'bags', keyword: 'women handbag' },
   { category: 'jewelry', keyword: 'necklace' },
   { category: 'men', keyword: 'men shirt' },
   // Extra searches for categories where few CJ products reach MIN_SUPPLIER_PRICE.
   { category: 'gifts', keyword: 'watch gift set' },
-  { category: 'gifts', keyword: 'perfume gift set' },
-  { category: 'perfume', keyword: 'perfume women' },
-  { category: 'perfume', keyword: 'perfume men' },
-  { category: 'accessories', keyword: 'leather belt' },
-  { category: 'accessories', keyword: 'silk scarf' },
-  { category: 'accessories', keyword: 'leather wallet' }
+  { category: 'gifts', keyword: 'silk scarf gift box' },
+  { category: 'scarves', keyword: 'cashmere scarf' },
+  { category: 'scarves', keyword: 'shawl' },
+  { category: 'accessories', keyword: 'leather wallet' },
+  { category: 'accessories', keyword: 'leather card holder' }
 ];
 
 const { DATABASE_URL, CJ_ACCESS_TOKEN } = process.env;
@@ -165,7 +166,7 @@ if (REPRICE_ONLY) {
 
 let total = 0;
 const perCategory = {};
-for (const [index, { category, keyword }] of SEARCHES.entries()) {
+for (const [index, { category, keyword }] of SEARCHES.filter(s => !ONLY || s.category === ONLY).entries()) {
   const wanted = PER_CATEGORY - (perCategory[category] || 0);
   if (wanted <= 0) continue;
   if (index > 0) await sleep(1200); // CJ allows ~1 request per second
@@ -214,8 +215,8 @@ if (HIDE_CHEAP) {
 // Active products imported earlier that this run's searches did not return: re-read their supplier
 // price from CJ so every product follows the same pricing rule.
 const { rows: stale } = await client.query(
-  'SELECT id, supplier_product_id, supplier_shipping FROM public.products WHERE active AND supplier_product_id LIKE $1 AND updated_at < $2',
-  ['cj-%', runStarted]
+  'SELECT id, supplier_product_id, supplier_shipping FROM public.products WHERE active AND supplier_product_id LIKE $1 AND updated_at < $2 AND ($3::text IS NULL OR category = $3)',
+  ['cj-%', runStarted, ONLY ?? null]
 );
 let repriced = 0;
 for (const row of stale) {
