@@ -123,7 +123,6 @@ async function stripeSession(env, body, origin) {
   try {
     const items = await trustedCart(env, body?.items);
     const shipping = validateShipping(body?.shipping);
-    const address = { line1: shipping.street, city: shipping.city, postal_code: shipping.postalCode, country: shipping.country };
     const metadata = { shipping_street: shipping.street, shipping_city: shipping.city, shipping_postal_code: shipping.postalCode, shipping_country: shipping.country };
     const stripe = new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient() });
     const session = await stripe.checkout.sessions.create({
@@ -143,7 +142,9 @@ async function stripeSession(env, body, origin) {
       })),
       billing_address_collection: 'required',
       shipping_address_collection: { allowed_countries: EU_COUNTRIES },
-      payment_intent_data: { shipping: { name: shipping.name || 'SAKANVIP Customer', address }, metadata },
+      // Stripe collects the shipping address itself (shipping_address_collection); it rejects a preset
+      // payment_intent_data.shipping alongside it, so the address from the page only goes in the metadata.
+      payment_intent_data: { metadata },
       metadata,
       success_url: env.CHECKOUT_SUCCESS_URL || `${origin}/?payment=success`,
       cancel_url: env.CHECKOUT_CANCEL_URL || `${origin}/?payment=cancel`
