@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "pdf-lib": "^1.17.1",
     "stripe": "^23.1.0",
     "worker-mailer": "^1.3.0"
   },
