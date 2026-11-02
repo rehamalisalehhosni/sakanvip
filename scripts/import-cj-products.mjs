@@ -5,8 +5,8 @@
 // Pricing follows the pricing sheet: sale price = supplier price x 2.5 (MARKUP_PERCENT 150), e.g.
 // 100 -> 250.00, covering shipping 16%, payment 8%, servers 6%, marketing 30%, taxes 30% and 60%
 // net profit of the supplier price. At least MIN_PRICE (default 19.99) as a safety floor.
-// CJ supplier prices are in USD; they are converted to EUR first with the ECB daily reference rate
-// (or USD_PER_EUR if set), so $100 at 1.1172 USD/EUR -> 89.51 EUR -> 223.78 EUR sale price.
+// Prices end in .99 (psychological pricing, rounded up). CJ supplier prices are in USD; they are converted to EUR first with the ECB daily reference rate
+// (or USD_PER_EUR if set), so $100 at 1.1172 USD/EUR -> 89.51 EUR -> 223.78 -> 223.99 EUR sale price.
 import pg from 'pg';
 
 const REPRICE_ONLY = process.argv.includes('--reprice');
@@ -61,9 +61,17 @@ async function loadExchangeRate() {
   USD_PER_EUR = rate;
 }
 // Supplier price (USD) -> EUR -> x2.5, in whole cents so x.xx5 rounds up exactly.
+// Psychological pricing: round the sheet price UP to the next .99 (51.53 -> 51.99), so it never drops
+// below supplier x 2.5. PRICE_ENDING=none keeps the exact sheet price.
+const CHARM_PRICING = process.env.PRICE_ENDING !== 'none';
 const retailPrice = supplierPriceUsd => {
   const eurCents = Math.round(supplierPriceUsd * 100 / USD_PER_EUR);
-  return Math.max(Math.round(eurCents * (100 + MARKUP_PERCENT) / 100) / 100, MIN_PRICE);
+  let cents = Math.round(eurCents * (100 + MARKUP_PERCENT) / 100);
+  if (CHARM_PRICING) {
+    const charm = Math.floor(cents / 100) * 100 + 99;
+    cents = charm >= cents ? charm : charm + 100;
+  }
+  return Math.max(cents / 100, MIN_PRICE);
 };
 
 async function productDetail(pid) {
