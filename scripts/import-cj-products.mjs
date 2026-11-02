@@ -144,6 +144,10 @@ if (REPRICE_ONLY) {
           row.supplier_shipping = cost;
           await client.query('UPDATE public.products SET supplier_shipping = $1 WHERE id = $2', [cost, row.id]);
           shipped++;
+        } else {
+          // No CJ shipping route to SHIP_TO (e.g. perfume as a liquid): it could be sold but never delivered.
+          await client.query('UPDATE public.products SET active = false, updated_at = now() WHERE id = $1', [row.id]);
+          console.log(`Hidden ${row.supplier_product_id}: CJ cannot ship it to ${SHIP_TO}.`);
         }
       } catch (err) {
         console.warn(`Could not get shipping for ${row.supplier_product_id}: ${err.message}`);
