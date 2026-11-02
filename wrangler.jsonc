@@ -32,10 +32,10 @@
     // Seller data printed on every invoice (required by § 14 UStG). SHOP_ADDRESS lines are split on "|".
     // SHOP_VAT_RATE: 19 = prices include 19 % VAT; 0 = small business, no VAT (§ 19 UStG).
     "SHOP_NAME": "SAKANVIP",
-    "SHOP_LEGAL_NAME": "",
-    "SHOP_ADDRESS": "",
+    "SHOP_LEGAL_NAME": "SAKAN",
+    "SHOP_ADDRESS": "Ehndorfer Str. 130|24537 Neumünster|Deutschland",
     "SHOP_TAX_ID": "",
-    "SHOP_VAT_RATE": "19"
+    "SHOP_VAT_RATE": "0"
   },
   "observability": { "enabled": true }
 }
