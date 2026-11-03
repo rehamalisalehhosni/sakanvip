@@ -6,6 +6,7 @@ import { WorkerMailer } from 'worker-mailer';
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { recordPaidOrder, variantText } from './orders.js';
+import { sendToCj, retryCjOrders } from './cj.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EU_COUNTRIES = ['DE', 'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'ES', 'FI', 'FR', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'SE'];
@@ -219,7 +220,7 @@ async function paypalOrder(env, body, origin) {
   }
 }
 
-async function paypalCapture(env, body) {
+async function paypalCapture(env, body, ctx) {
   if (!paypalReady(env)) return json({ error: 'PayPal ist noch nicht konfiguriert.' }, 503);
   const orderId = String(body?.orderId || '');
   if (!/^[A-Z0-9-]{8,64}$/i.test(orderId)) return json({ error: 'Ungültige PayPal-Bestellnummer.' }, 400);
@@ -233,7 +234,10 @@ async function paypalCapture(env, body) {
     const data = await response.json();
     if (!response.ok || data.status !== 'COMPLETED') throw new Error(data.message || 'Capture not completed');
     // The payment is done; a failed order email must not show the customer an error.
-    try { await recordPaypalOrder(env, token, orderId); } catch (err) { console.error('PayPal order record failed:', orderId, err.message); }
+    try {
+      const order = await recordPaypalOrder(env, token, orderId);
+      ctx?.waitUntil(sendToCj(env, order));
+    } catch (err) { console.error('PayPal order record failed:', orderId, err.message); }
     return json({ ok: true, status: data.status, id: data.id });
   } catch (err) {
     console.error('PayPal capture error:', err.message);
@@ -248,7 +252,7 @@ async function recordPaypalOrder(env, token, orderId) {
   const unit = data.purchase_units?.[0] || {};
   const a = unit.shipping?.address || {};
   const shipping = { name: unit.shipping?.name?.full_name, line1: a.address_line_1, line2: a.address_line_2, city: a.admin_area_2, postal_code: a.postal_code, country: a.country_code };
-  await recordPaidOrder(env, {
+  return recordPaidOrder(env, {
     provider: 'paypal',
     reference: orderId,
     customer: { name: [data.payer?.name?.given_name, data.payer?.name?.surname].filter(Boolean).join(' ') || shipping.name, email: data.payer?.email_address, phone: unit.custom_id || data.payer?.phone?.phone_number?.national_number },
@@ -266,7 +270,7 @@ async function recordStripeOrder(env, stripe, session) {
   const lines = await stripe.checkout.sessions.listLineItems(session.id, { limit: 100, expand: ['data.price.product'] });
   const details = session.customer_details || {};
   const ship = session.collected_information?.shipping_details || session.shipping_details || {};
-  await recordPaidOrder(env, {
+  return recordPaidOrder(env, {
     provider: 'stripe',
     reference: session.id,
     customer: { name: details.name || ship.name, email: details.email, phone: session.metadata?.shipping_phone || details.phone },
@@ -281,7 +285,7 @@ async function recordStripeOrder(env, stripe, session) {
 }
 
 // Stripe calls this server-to-server, so it has no Origin header and needs the raw body for the signature.
-async function stripeWebhook(env, request) {
+async function stripeWebhook(env, request, ctx) {
   if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) return new Response('Stripe webhook is not configured.', { status: 503 });
   const signature = request.headers.get('stripe-signature');
   const raw = await request.text();
@@ -300,7 +304,9 @@ async function stripeWebhook(env, request) {
       console.log('Stripe payment completed:', event.data.object.id, event.data.object.payment_status);
       if (event.data.object.payment_status !== 'paid') break; // delayed methods arrive as async_payment_succeeded
       try {
-        await recordStripeOrder(env, stripe, event.data.object);
+        const order = await recordStripeOrder(env, stripe, event.data.object);
+        // The CJ order runs after Stripe gets its answer; failures are kept on the order and retried by the cron.
+        ctx?.waitUntil(sendToCj(env, order));
       } catch (err) {
         // 500 makes Stripe retry; recordPaidOrder skips what is already done.
         console.error('Stripe order record failed:', event.data.object.id, err.message);
@@ -352,15 +358,18 @@ const routes = {
   '/api/contact': (env, body) => contact(env, body),
   '/api/payments/stripe/session': stripeSession,
   '/api/payments/paypal/order': paypalOrder,
-  '/api/payments/paypal/capture': (env, body) => paypalCapture(env, body)
+  '/api/payments/paypal/capture': (env, body, origin, ctx) => paypalCapture(env, body, ctx)
 };
 
 export default {
-  async fetch(request, env) {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(retryCjOrders(env));
+  },
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ ok: true });
     if (url.pathname === '/api/payments/stripe/webhook') {
-      return request.method === 'POST' ? stripeWebhook(env, request) : json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
+      return request.method === 'POST' ? stripeWebhook(env, request, ctx) : json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
     }
     if (url.pathname === '/api/cj/status' || url.pathname === '/api/cj/read-tool') return cjAdmin(env, request, url.pathname);
     const handler = routes[url.pathname];
@@ -387,7 +396,7 @@ export default {
     let body;
     try { body = raw ? JSON.parse(raw) : {}; } catch { return json({ error: 'Ungültige Anfrage.' }, 400, cors); }
 
-    const response = await handler(env, body, url.origin);
+    const response = await handler(env, body, url.origin, ctx);
     for (const [k, v] of Object.entries(cors)) response.headers.set(k, v);
     return response;
   }

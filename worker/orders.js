@@ -9,7 +9,7 @@ export const variantText = item => [item.size && `Größe: ${item.size}`, item.c
 export const addressLines = a => (a ? [a.line1, a.line2, [a.postal_code, a.city].filter(Boolean).join(' '), a.country] : []).filter(Boolean).map(String);
 
 // Supabase REST as the service role (orders have RLS on and no policies).
-async function supabase(env, path, init = {}) {
+export async function supabase(env, path, init = {}) {
   if (!env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured');
   const key = env.SUPABASE_SERVICE_ROLE_KEY;
   // New sb_secret_ keys go in the apikey header only; legacy service_role JWTs also as Bearer.

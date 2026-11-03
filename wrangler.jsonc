@@ -35,7 +35,14 @@
     "SHOP_LEGAL_NAME": "SAKAN",
     "SHOP_ADDRESS": "Ehndorfer Str. 130|24537 Neumünster|Deutschland",
     "SHOP_TAX_ID": "Steuernummer: 544-208-174-435",
-    "SHOP_VAT_RATE": "0"
+    "SHOP_VAT_RATE": "0",
+    // CJ fulfilment (worker/cj.js). CJ_AUTO_PAY "on" pays CJ orders from the CJ wallet; "off" leaves them
+    // waiting in CJ for the owner. CJ_IOSS_TYPE 3 = CJ collects EU import VAT. CJ_SANDBOX "on" makes test orders only.
+    "CJ_AUTO_PAY": "off",
+    "CJ_IOSS_TYPE": "3",
+    "CJ_SANDBOX": "off"
   },
+  // Every 30 minutes: send paid orders that are not at CJ yet (and pay them when auto-pay is on).
+  "triggers": { "crons": ["*/30 * * * *"] },
   "observability": { "enabled": true }
 }
