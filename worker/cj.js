@@ -195,3 +195,60 @@ export async function retryCjOrders(env, sendMail) {
   const unpaid = await supabase(env, `orders?status=eq.sent_to_supplier&supplier_paid_at=is.null&supplier_order_id=not.is.null&created_at=gte.${since}&select=*&order=created_at&limit=10`);
   for (const order of unpaid) await payCj(env, order, sendMail);
 }
+
+// Cron: reads CJ's status and tracking for orders at CJ, at most every 6 hours per order. When CJ ships,
+// the order becomes "shipped" and the customer gets the tracking number by email; when CJ reports it
+// delivered, it becomes "delivered". A cancellation at CJ is emailed to the owner (once).
+export async function checkCjTracking(env, sendMail) {
+  const checkedBefore = new Date(Date.now() - 6 * 3600e3).toISOString();
+  const open = await supabase(env,
+    `orders?status=in.(sent_to_supplier,shipped)&supplier_order_id=not.is.null` +
+    `&or=(supplier_checked_at.is.null,supplier_checked_at.lt."${checkedBefore}")&select=*&order=supplier_checked_at.asc.nullsfirst&limit=10`);
+  for (const order of open) {
+    try {
+      const detail = await cj(env, `shopping/order/getOrderDetail?orderId=${encodeURIComponent(order.supplier_order_id)}`);
+      const cjStatus = String(detail?.orderStatus || '');
+      const fields = { supplier_status: cjStatus || null, supplier_checked_at: new Date().toISOString() };
+      const trackNumber = String(detail?.trackNumber || '').trim();
+      const now = new Date().toISOString();
+      if (trackNumber && trackNumber !== order.tracking_number) {
+        const url = detail.trackingUrl || `https://t.17track.net/en#nums=${encodeURIComponent(trackNumber)}`;
+        Object.assign(fields, { tracking_number: trackNumber, tracking_url: url, status: 'shipped', shipped_at: order.shipped_at || now });
+        await setOrder(env, order.id, fields);
+        await emailTracking(env, sendMail, { ...order, ...fields }, detail.trackingProvider || detail.logisticName);
+        continue;
+      }
+      if (cjStatus === 'DELIVERED') Object.assign(fields, { status: 'delivered', delivered_at: now });
+      await setOrder(env, order.id, fields);
+      if (cjStatus === 'CANCELLED' && order.supplier_status !== 'CANCELLED') {
+        await alertOwner(env, sendMail, `${order.invoice_number}: bei CJ storniert`, [
+          `CJ meldet die Bestellung ${order.invoice_number} (CJ ${order.supplier_order_id}) als storniert.`,
+          `Kunde: ${order.customer_name || '—'} <${order.customer_email || 'keine E-Mail'}>, ${Number(order.total).toFixed(2)} EUR.`,
+          'Bitte prüfen, ob der Kunde eine Erstattung braucht oder die Bestellung neu angelegt werden muss.'
+        ]);
+      }
+    } catch (err) {
+      console.error('CJ tracking check failed:', order.invoice_number, err.message);
+      await setOrder(env, order.id, { supplier_checked_at: new Date().toISOString() }).catch(() => {});
+    }
+  }
+}
+
+async function emailTracking(env, sendMail, order, carrier) {
+  if (!sendMail || !order.customer_email) return;
+  const shop = env.SHOP_NAME || 'SAKANVIP';
+  await sendMail(env, {
+    to: order.customer_email,
+    reply: shopMail(env),
+    subject: `Ihre Bestellung ${order.invoice_number} ist unterwegs`,
+    text: [
+      `Guten Tag ${order.customer_name || ''},`.trim(), '',
+      `Ihre Bestellung ${order.invoice_number} bei ${shop} wurde versandt.`, '',
+      `Sendungsnummer: ${order.tracking_number}`,
+      ...(carrier ? [`Versanddienst: ${carrier}`] : []),
+      `Sendungsverfolgung: ${order.tracking_url}`, '',
+      'Die Lieferung dauert in der Regel 7–15 Werktage. Die Sendungsverfolgung zeigt erste Daten oft erst nach 1–3 Tagen.', '',
+      `Mit freundlichen Grüßen\n${shop}`
+    ].join('\n')
+  }).catch(err => console.error('Tracking mail failed:', order.invoice_number, err.message));
+}

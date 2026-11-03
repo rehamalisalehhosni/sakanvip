@@ -6,7 +6,7 @@ import { WorkerMailer } from 'worker-mailer';
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { recordPaidOrder, variantText } from './orders.js';
-import { sendToCj, retryCjOrders } from './cj.js';
+import { sendToCj, retryCjOrders, checkCjTracking } from './cj.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EU_COUNTRIES = ['DE', 'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'ES', 'FI', 'FR', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'SE'];
@@ -363,7 +363,8 @@ const routes = {
 
 export default {
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(retryCjOrders(env, sendMail));
+    // One after the other: CJ allows about one request per second.
+    ctx.waitUntil(retryCjOrders(env, sendMail).finally(() => checkCjTracking(env, sendMail)));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
