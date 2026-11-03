@@ -40,7 +40,11 @@
     // waiting in CJ for the owner. CJ_IOSS_TYPE 3 = CJ collects EU import VAT. CJ_SANDBOX "on" makes test orders only.
     "CJ_AUTO_PAY": "off",
     "CJ_IOSS_TYPE": "3",
-    "CJ_SANDBOX": "off"
+    "CJ_SANDBOX": "off",
+    // Before auto-paying: hold the order if CJ's cost is above this share of the sale, and email the owner
+    // when the CJ wallet drops below CJ_LOW_BALANCE_USD.
+    "CJ_MAX_COST_SHARE": "0.6",
+    "CJ_LOW_BALANCE_USD": "100"
   },
   // Every 30 minutes: send paid orders that are not at CJ yet (and pay them when auto-pay is on).
   "triggers": { "crons": ["*/30 * * * *"] },

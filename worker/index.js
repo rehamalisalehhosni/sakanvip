@@ -236,7 +236,7 @@ async function paypalCapture(env, body, ctx) {
     // The payment is done; a failed order email must not show the customer an error.
     try {
       const order = await recordPaypalOrder(env, token, orderId);
-      ctx?.waitUntil(sendToCj(env, order));
+      ctx?.waitUntil(sendToCj(env, order, sendMail));
     } catch (err) { console.error('PayPal order record failed:', orderId, err.message); }
     return json({ ok: true, status: data.status, id: data.id });
   } catch (err) {
@@ -306,7 +306,7 @@ async function stripeWebhook(env, request, ctx) {
       try {
         const order = await recordStripeOrder(env, stripe, event.data.object);
         // The CJ order runs after Stripe gets its answer; failures are kept on the order and retried by the cron.
-        ctx?.waitUntil(sendToCj(env, order));
+        ctx?.waitUntil(sendToCj(env, order, sendMail));
       } catch (err) {
         // 500 makes Stripe retry; recordPaidOrder skips what is already done.
         console.error('Stripe order record failed:', event.data.object.id, err.message);
@@ -363,7 +363,7 @@ const routes = {
 
 export default {
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(retryCjOrders(env));
+    ctx.waitUntil(retryCjOrders(env, sendMail));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
