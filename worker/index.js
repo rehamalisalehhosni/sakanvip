@@ -54,8 +54,10 @@ async function trustedCart(env, items) {
   if (!Array.isArray(items) || !items.length || items.length > 50) throw new UserError('Warenkorb ungültig.');
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) throw new Error('Produktdatenbank ist nicht konfiguriert.');
   const variant = value => (value == null || value === '' ? '' : String(value).trim());
-  const normalized = items.map(x => ({ id: String(x?.product_id || ''), quantity: Number(x?.quantity), size: variant(x?.size), color: variant(x?.color) }));
-  if (normalized.some(x => !UUID.test(x.id) || !Number.isInteger(x.quantity) || x.quantity < 1 || x.quantity > 20 ||
+  const normalized = items.map(x => ({
+    id: String(x?.product_id || ''), variantId: String(x?.variant_id || ''), quantity: Number(x?.quantity), size: variant(x?.size), color: variant(x?.color)
+  }));
+  if (normalized.some(x => !UUID.test(x.id) || (x.variantId && !UUID.test(x.variantId)) || !Number.isInteger(x.quantity) || x.quantity < 1 || x.quantity > 20 ||
     [x.size, x.color].some(v => v && !VARIANT.test(v)))) {
     throw new UserError('Warenkorbposition ungültig.');
   }
@@ -68,7 +70,22 @@ async function trustedCart(env, items) {
   if (!response.ok) throw new Error('Produktdaten konnten nicht geladen werden.');
   const byId = new Map((await response.json()).map(p => [p.id, p]));
   if (ids.some(id => !byId.has(id))) throw new UserError('Ein Produkt ist nicht verfügbar.');
-  return normalized.map(x => ({ product: byId.get(x.id), quantity: x.quantity, size: x.size, color: x.color }));
+  // A product with CJ variants is sold per variant: price, size and colour come from the variant row.
+  const variantsUrl = new URL('/rest/v1/product_variants', env.SUPABASE_URL);
+  variantsUrl.searchParams.set('select', 'id,product_id,price,size,color');
+  variantsUrl.searchParams.set('product_id', `in.(${ids.join(',')})`);
+  variantsUrl.searchParams.set('active', 'eq.true');
+  const variantsResponse = await fetch(variantsUrl, { headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${env.SUPABASE_ANON_KEY}` } });
+  if (!variantsResponse.ok) throw new Error('Produktvarianten konnten nicht geladen werden.');
+  const variants = await variantsResponse.json();
+  return normalized.map(x => {
+    const product = byId.get(x.id);
+    const own = variants.filter(v => v.product_id === x.id);
+    if (!own.length) return { product, quantity: x.quantity, size: x.size, color: x.color, variantId: '' };
+    const chosen = own.find(v => v.id === x.variantId);
+    if (!chosen) throw new UserError(`Bitte wählen Sie Größe und Farbe für "${String(product.name).slice(0, 60)}" erneut aus.`);
+    return { product: { ...product, price: chosen.price }, quantity: x.quantity, size: chosen.size || '', color: chosen.color || '', variantId: chosen.id };
+  });
 }
 
 const paypalBase = env => (env.PAYPAL_MODE === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com');
@@ -128,7 +145,7 @@ async function stripeSession(env, body, origin) {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       currency: 'eur',
-      line_items: items.map(({ product, quantity, size, color }) => ({
+      line_items: items.map(({ product, quantity, size, color, variantId }) => ({
         quantity,
         price_data: {
           currency: 'eur',
@@ -136,7 +153,7 @@ async function stripeSession(env, body, origin) {
           product_data: {
             name: product.name,
             ...(variantText({ size, color }) && { description: variantText({ size, color }) }),
-            metadata: { product_id: product.id, size, color }
+            metadata: { product_id: product.id, variant_id: variantId, size, color }
           }
         }
       })),
@@ -174,9 +191,9 @@ async function paypalOrder(env, body, origin) {
             address: { address_line_1: shipping.street, admin_area_2: shipping.city, postal_code: shipping.postalCode, country_code: shipping.country }
           },
           amount: { currency_code: 'EUR', value: total.toFixed(2), breakdown: { item_total: { currency_code: 'EUR', value: total.toFixed(2) } } },
-          items: items.map(({ product, quantity, size, color }) => ({
+          items: items.map(({ product, quantity, size, color, variantId }) => ({
             name: String(product.name).slice(0, 127), quantity: String(quantity),
-            sku: [product.id, size, color].join('|'),
+            sku: [product.id, variantId, size, color].join('|').slice(0, 127),
             ...(variantText({ size, color }) && { description: variantText({ size, color }) }),
             unit_amount: { currency_code: 'EUR', value: Number(product.price).toFixed(2) }
           }))
@@ -234,8 +251,8 @@ async function recordPaypalOrder(env, token, orderId) {
     shipping,
     billing: null,
     items: (unit.items || []).map(item => {
-      const [product_id, size, color] = String(item.sku || '').split('|');
-      return { product_id, name: item.name, size, color, quantity: Number(item.quantity), unit_price: Number(item.unit_amount?.value) };
+      const [product_id, variant_id, size, color] = String(item.sku || '').split('|');
+      return { product_id, variant_id: variant_id || null, name: item.name, size, color, quantity: Number(item.quantity), unit_price: Number(item.unit_amount?.value) };
     }),
     total: Number(unit.amount?.value)
   }, sendMail);
@@ -253,7 +270,7 @@ async function recordStripeOrder(env, stripe, session) {
     billing: details.address ? { name: details.name, ...details.address } : null,
     items: lines.data.map(line => {
       const meta = line.price?.product?.metadata || {};
-      return { product_id: meta.product_id, name: line.price?.product?.name || line.description, size: meta.size, color: meta.color, quantity: line.quantity, unit_price: line.price.unit_amount / 100 };
+      return { product_id: meta.product_id, variant_id: meta.variant_id || null, name: line.price?.product?.name || line.description, size: meta.size, color: meta.color, quantity: line.quantity, unit_price: line.price.unit_amount / 100 };
     }),
     total: session.amount_total / 100
   }, sendMail);
