@@ -67,7 +67,9 @@ export async function sendToCj(env, order) {
     const a = order.shipping_address || {};
     const country = String(a.country || '').toUpperCase();
     const logisticName = await cheapestShipping(env, country, products);
-    const sandbox = env.CJ_SANDBOX === 'on';
+    // Test payments (Stripe test mode, PayPal sandbox) only ever create CJ sandbox orders.
+    const sandbox = env.CJ_SANDBOX === 'on' || /^cs_test_/.test(order.payment_reference || '') ||
+      (order.payment_provider === 'paypal' && env.PAYPAL_MODE !== 'live');
     const created = await cj(env, 'shopping/order/createOrderV2', {
       method: 'POST',
       body: JSON.stringify({
