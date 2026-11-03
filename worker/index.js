@@ -31,8 +31,11 @@ function validateShipping(input) {
   const city = String(input?.city || '').trim().slice(0, 120);
   const postalCode = String(input?.postalCode || '').trim().slice(0, 24);
   const country = String(input?.country || 'DE').trim().toUpperCase();
+  // CJ and the carriers need a phone number for delivery; spaces, brackets, dots and dashes are dropped.
+  const phone = String(input?.phone || '').replace(/[\s()./-]/g, '');
   if (!street || !city || !postalCode || !EU_COUNTRIES.includes(country)) throw new UserError('Versandadresse ungültig.');
-  return { name, street, city, postalCode, country };
+  if (!/^\+?\d{6,15}$/.test(phone)) throw new UserError('Bitte geben Sie eine gültige Telefonnummer für die Zustellung an.');
+  return { name, street, city, postalCode, country, phone };
 }
 
 // Constant-time comparison of two strings.
@@ -140,7 +143,7 @@ async function stripeSession(env, body, origin) {
   try {
     const items = await trustedCart(env, body?.items);
     const shipping = validateShipping(body?.shipping);
-    const metadata = { shipping_street: shipping.street, shipping_city: shipping.city, shipping_postal_code: shipping.postalCode, shipping_country: shipping.country };
+    const metadata = { shipping_street: shipping.street, shipping_city: shipping.city, shipping_postal_code: shipping.postalCode, shipping_country: shipping.country, shipping_phone: shipping.phone };
     const stripe = new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient() });
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -186,6 +189,7 @@ async function paypalOrder(env, body, origin) {
       body: JSON.stringify({
         intent: 'CAPTURE',
         purchase_units: [{
+          custom_id: shipping.phone, // the delivery phone, read back when the order is saved
           shipping: {
             name: { full_name: shipping.name || 'SAKANVIP Customer' },
             address: { address_line_1: shipping.street, admin_area_2: shipping.city, postal_code: shipping.postalCode, country_code: shipping.country }
@@ -247,7 +251,7 @@ async function recordPaypalOrder(env, token, orderId) {
   await recordPaidOrder(env, {
     provider: 'paypal',
     reference: orderId,
-    customer: { name: [data.payer?.name?.given_name, data.payer?.name?.surname].filter(Boolean).join(' ') || shipping.name, email: data.payer?.email_address },
+    customer: { name: [data.payer?.name?.given_name, data.payer?.name?.surname].filter(Boolean).join(' ') || shipping.name, email: data.payer?.email_address, phone: unit.custom_id || data.payer?.phone?.phone_number?.national_number },
     shipping,
     billing: null,
     items: (unit.items || []).map(item => {
@@ -265,7 +269,7 @@ async function recordStripeOrder(env, stripe, session) {
   await recordPaidOrder(env, {
     provider: 'stripe',
     reference: session.id,
-    customer: { name: details.name || ship.name, email: details.email },
+    customer: { name: details.name || ship.name, email: details.email, phone: session.metadata?.shipping_phone || details.phone },
     shipping: { name: ship.name, ...(ship.address || details.address) },
     billing: details.address ? { name: details.name, ...details.address } : null,
     items: lines.data.map(line => {

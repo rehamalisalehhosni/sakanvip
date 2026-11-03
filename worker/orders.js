@@ -38,6 +38,7 @@ async function createOrder(env, order) {
         payment_reference: order.reference,
         customer_name: order.customer.name,
         customer_email: order.customer.email,
+        customer_phone: order.customer.phone || null,
         shipping_address: order.shipping,
         billing_address: order.billing,
         items: order.items,
@@ -200,7 +201,7 @@ export async function recordPaidOrder(env, order, sendMail) {
   await sendMail(env, {
     to: shop,
     subject: `[SakanVIP Bestellung] ${row.invoice_number} – ${euro(row.total)}`,
-    text: `Neue bezahlte Bestellung (${row.payment_provider}, ${row.payment_reference}).\nKunde: ${row.customer_name || '—'} <${row.customer_email || 'keine E-Mail'}>\n\n${text}`,
+    text: `Neue bezahlte Bestellung (${row.payment_provider}, ${row.payment_reference}).\nKunde: ${row.customer_name || '—'} <${row.customer_email || 'keine E-Mail'}>\nTelefon: ${row.customer_phone || '—'}\n\n${text}`,
     attachments
   });
   await supabase(env, `orders?id=eq.${row.id}`, { method: 'PATCH', body: JSON.stringify({ invoice_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }) });
