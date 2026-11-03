@@ -9,7 +9,7 @@ export const variantText = item => [item.size && `Größe: ${item.size}`, item.c
 export const addressLines = a => (a ? [a.line1, a.line2, [a.postal_code, a.city].filter(Boolean).join(' '), a.country] : []).filter(Boolean).map(String);
 
 // Supabase REST as the service role (orders have RLS on and no policies).
-async function supabase(env, path, init = {}) {
+export async function supabase(env, path, init = {}) {
   if (!env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured');
   const key = env.SUPABASE_SERVICE_ROLE_KEY;
   // New sb_secret_ keys go in the apikey header only; legacy service_role JWTs also as Bearer.
@@ -38,6 +38,7 @@ async function createOrder(env, order) {
         payment_reference: order.reference,
         customer_name: order.customer.name,
         customer_email: order.customer.email,
+        customer_phone: order.customer.phone || null,
         shipping_address: order.shipping,
         billing_address: order.billing,
         items: order.items,
@@ -200,7 +201,7 @@ export async function recordPaidOrder(env, order, sendMail) {
   await sendMail(env, {
     to: shop,
     subject: `[SakanVIP Bestellung] ${row.invoice_number} – ${euro(row.total)}`,
-    text: `Neue bezahlte Bestellung (${row.payment_provider}, ${row.payment_reference}).\nKunde: ${row.customer_name || '—'} <${row.customer_email || 'keine E-Mail'}>\n\n${text}`,
+    text: `Neue bezahlte Bestellung (${row.payment_provider}, ${row.payment_reference}).\nKunde: ${row.customer_name || '—'} <${row.customer_email || 'keine E-Mail'}>\nTelefon: ${row.customer_phone || '—'}\n\n${text}`,
     attachments
   });
   await supabase(env, `orders?id=eq.${row.id}`, { method: 'PATCH', body: JSON.stringify({ invoice_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }) });
