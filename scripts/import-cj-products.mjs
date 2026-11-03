@@ -8,8 +8,8 @@
 //          (load each active product's CJ variants into product_variants)
 // Pricing follows the pricing sheet: sale price = supplier price x 2.5 (MARKUP_PERCENT 150), e.g.
 // 100 -> 250.00, covering payment 8%, servers 6%, marketing 30%, taxes 30% and 60% net profit of the
-// supplier price. CJ's cheapest shipping to Germany (SHIP_TO) is added on top, since the shop ships
-// for free and real shipping (4-18 EUR) is more than the sheet's 16%. At least MIN_PRICE (default 19.99).
+// supplier price. CJ's real shipping to Germany (SHIP_TO, incl. customs) and the EU import VAT CJ collects
+// (IOSS) are added on top, since the shop ships for free and they are more than the sheet's 16%. At least MIN_PRICE (default 19.99).
 // Prices end in 9.99 (psychological pricing, nearest). CJ prices are in USD; they are converted to EUR with the ECB daily reference rate
 // (or USD_PER_EUR if set), so $100 at 1.1172 USD/EUR -> 89.51 EUR -> 223.78 -> 219.99 EUR sale price.
 import pg from 'pg';
@@ -68,6 +68,12 @@ const firstNumber = value => {
 };
 const MARKUP_PERCENT = Number(process.env.MARKUP_PERCENT ?? 150);
 const MIN_PRICE = Number(process.env.MIN_PRICE ?? 19.99);
+// EU import VAT that CJ charges per order through its IOSS service: a share of the product cost plus a
+// small handling fee (USD). 21 % is about the EU average; Germany is 19 %.
+const IOSS_RATE = Number(process.env.IOSS_RATE ?? 0.21);
+const IOSS_FEE_USD = 0.05;
+// Shipping methods slower than this are not used (CJPacket Eub quotes up to 50 days).
+const MAX_SHIPPING_DAYS = Number(process.env.MAX_SHIPPING_DAYS ?? 20);
 let USD_PER_EUR = Number(process.env.USD_PER_EUR) || null;
 async function loadExchangeRate() {
   if (USD_PER_EUR) return;
@@ -76,14 +82,16 @@ async function loadExchangeRate() {
   if (!(rate > 0)) throw new Error('Could not read the ECB USD rate; set USD_PER_EUR.');
   USD_PER_EUR = rate;
 }
-// Supplier price (USD) -> EUR -> x2.5, plus shipping (USD -> EUR), in whole cents so x.xx5 rounds up exactly.
+// Supplier price (USD) -> EUR -> x2.5, plus shipping and IOSS import VAT (USD -> EUR), in whole cents so
+// x.xx5 rounds up exactly.
 // Psychological pricing: move the sheet price to the nearest price ending in 9.99 (51.53 -> 49.99,
 // 57.10 -> 59.99), at most 5 EUR either way, so profit stays close to supplier x 2.5 on average.
 // PRICE_ENDING=none keeps the exact sheet price.
 const CHARM_PRICING = process.env.PRICE_ENDING !== 'none';
 const retailPrice = (supplierPriceUsd, shippingUsd = 0) => {
   const eurCents = Math.round(supplierPriceUsd * 100 / USD_PER_EUR);
-  let cents = Math.round(eurCents * (100 + MARKUP_PERCENT) / 100) + Math.round(shippingUsd * 100 / USD_PER_EUR);
+  const costsUsd = shippingUsd + supplierPriceUsd * IOSS_RATE + IOSS_FEE_USD;
+  let cents = Math.round(eurCents * (100 + MARKUP_PERCENT) / 100) + Math.round(costsUsd * 100 / USD_PER_EUR);
   if (CHARM_PRICING) {
     const below = Math.floor((cents + 1) / 1000) * 1000 - 1; // highest x9.99 at or below
     cents = cents - below <= below + 1000 - cents ? below : below + 1000;
@@ -100,7 +108,9 @@ async function productDetail(pid) {
   return body.data;
 }
 
-// Cheapest CJ shipping (USD) from China to SHIP_TO for one unit of the product's first variant.
+// Cheapest real CJ shipping (USD) from China to SHIP_TO for one unit of the product's first variant, the same
+// way worker/cj.js picks it for orders: totalPostageFee (includes customs and clearance), within
+// MAX_SHIPPING_DAYS.
 async function shippingCost(pid, detail = null) {
   if (!detail) { await sleep(1200); detail = await productDetail(pid); }
   const vid = detail?.variants?.[0]?.vid;
@@ -113,7 +123,9 @@ async function shippingCost(pid, detail = null) {
   });
   const body = await response.json();
   if (!response.ok || body.result === false) throw new Error(`CJ freight ${pid}: ${body.message || response.status}`);
-  const prices = (body.data || []).map(q => Number(q.logisticPrice)).filter(p => p > 0);
+  const days = q => Math.max(...String(q.logisticAging || '').split('-').map(Number).filter(n => n > 0), 0) || 99;
+  const prices = (body.data || []).filter(q => days(q) <= MAX_SHIPPING_DAYS)
+    .map(q => Number(q.totalPostageFee) || Number(q.logisticPrice)).filter(p => p > 0);
   return prices.length ? Math.min(...prices) : null;
 }
 

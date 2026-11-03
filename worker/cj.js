@@ -37,12 +37,17 @@ async function cj(env, path, init = {}) {
 const setOrder = (env, id, fields) =>
   supabase(env, `orders?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ ...fields, updated_at: new Date().toISOString() }) });
 
+// Cheapest by CJ's real total (totalPostageFee includes customs and clearance, logisticPrice does not),
+// among methods that deliver within CJ_MAX_DAYS (default 20; CJPacket Eub quotes up to 50 days).
 async function cheapestShipping(env, country, products) {
+  const maxDays = Number(env.CJ_MAX_DAYS || 20);
   const quotes = await cj(env, 'logistic/freightCalculate', {
     method: 'POST', body: JSON.stringify({ startCountryCode: 'CN', endCountryCode: country, products: products.map(p => ({ vid: p.vid, quantity: p.quantity })) })
   });
-  const best = (quotes || []).filter(q => Number(q.logisticPrice) > 0).sort((a, b) => a.logisticPrice - b.logisticPrice)[0];
-  if (!best) throw new Error(`CJ has no shipping route from CN to ${country}`);
+  const total = q => Number(q.totalPostageFee) || Number(q.logisticPrice);
+  const days = q => Math.max(...String(q.logisticAging || '').split('-').map(Number).filter(n => n > 0), 0) || 99;
+  const best = (quotes || []).filter(q => total(q) > 0 && days(q) <= maxDays).sort((a, b) => total(a) - total(b))[0];
+  if (!best) throw new Error(`CJ has no shipping route from CN to ${country} within ${maxDays} days`);
   return best.logisticName;
 }
 
@@ -83,7 +88,6 @@ export async function sendToCj(env, order) {
         payType: 3, // create only; payment below
         iossType: Number(env.CJ_IOSS_TYPE || 3), // 3 = CJ collects EU import VAT, so the customer pays nothing at the door
         isSandbox: sandbox ? 1 : 0,
-        storeName: env.SHOP_NAME || 'SAKANVIP',
         products
       })
     });
@@ -103,12 +107,22 @@ export async function sendToCj(env, order) {
 }
 
 // Pays a created CJ order from the CJ wallet.
+// An order created with payType 3 is paid in CJ's three steps: add it to the CJ cart, confirm the cart
+// (which returns the shipment id) and pay that shipment from the wallet.
 export async function payCj(env, order) {
-  if (!order.supplier_shipment_id || order.supplier_paid_at) return order;
-  await cj(env, 'shopping/pay/payBalanceV2', { method: 'POST', body: JSON.stringify({ shipmentOrderId: order.supplier_shipment_id }) });
+  if (!order.supplier_order_id || order.supplier_paid_at) return order;
+  let shipment = order.supplier_shipment_id;
+  if (!shipment) {
+    const ids = JSON.stringify({ cjOrderIdList: [order.supplier_order_id] });
+    await cj(env, 'shopping/order/addCart', { method: 'POST', body: ids });
+    shipment = (await cj(env, 'shopping/order/addCartConfirm', { method: 'POST', body: ids }))?.shipmentsId;
+    if (!shipment) throw new Error('CJ did not confirm the order for payment');
+    await setOrder(env, order.id, { supplier_shipment_id: shipment });
+  }
+  await cj(env, 'shopping/pay/payBalanceV2', { method: 'POST', body: JSON.stringify({ shipmentOrderId: shipment }) });
   const paidAt = new Date().toISOString();
   await setOrder(env, order.id, { supplier_paid_at: paidAt, supplier_error: null });
-  return { ...order, supplier_paid_at: paidAt, supplier_error: null };
+  return { ...order, supplier_shipment_id: shipment, supplier_paid_at: paidAt, supplier_error: null };
 }
 
 // Cron: orders paid in the last 30 days that are not at CJ yet, or created there but unpaid (auto-pay on).
@@ -117,7 +131,7 @@ export async function retryCjOrders(env) {
   const waiting = await supabase(env, `orders?status=eq.paid&supplier_order_id=is.null&created_at=gte.${since}&select=*&order=created_at&limit=10`);
   for (const order of waiting) await sendToCj(env, order);
   if (env.CJ_AUTO_PAY !== 'on') return;
-  const unpaid = await supabase(env, `orders?status=eq.sent_to_supplier&supplier_paid_at=is.null&created_at=gte.${since}&select=*&order=created_at&limit=10`);
+  const unpaid = await supabase(env, `orders?status=eq.sent_to_supplier&supplier_paid_at=is.null&supplier_order_id=not.is.null&created_at=gte.${since}&select=*&order=created_at&limit=10`);
   for (const order of unpaid) {
     try { await payCj(env, order); } catch (err) {
       console.error('CJ payment failed:', order.invoice_number, err.message);
