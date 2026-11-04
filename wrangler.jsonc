@@ -20,6 +20,7 @@
   ],
   // Public values; secrets go in the dashboard.
   "vars": {
+    "CANONICAL_HOST": "sakanapp.net",
     "SUPABASE_URL": "https://kxkxakcwvvreyzyzzqem.supabase.co",
     "SUPABASE_ANON_KEY": "sb_publishable_BIkVwJQT5c_ycJQQU0GPTg_pJrONYQ3",
     "SMTP_HOST": "smtps.udag.de",

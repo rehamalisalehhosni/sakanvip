@@ -405,6 +405,13 @@ export default {
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    // One public address for search engines: pages on www or on the production workers.dev name
+    // move permanently to CANONICAL_HOST. API calls and branch previews (<branch>-sakanvip-cf...) stay.
+    const canonical = env.CANONICAL_HOST;
+    if (canonical && url.hostname !== canonical && (request.method === 'GET' || request.method === 'HEAD') && !url.pathname.startsWith('/api/') &&
+        (url.hostname === 'www.' + canonical || (url.hostname.startsWith('sakanvip-cf.') && url.hostname.endsWith('.workers.dev')))) {
+      return Response.redirect(`https://${canonical}${url.pathname}${url.search}`, 301);
+    }
     if (url.pathname === '/health') return json({ ok: true });
     // Public storefront settings; the PayPal client ID is public by design (it is in the SDK URL).
     if (url.pathname === '/api/config') {
