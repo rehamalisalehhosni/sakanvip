@@ -139,6 +139,42 @@ async function contact(env, body) {
   }
 }
 
+// Online withdrawal function (EU Consumer Rights Directive, Art. 11a): the customer declares the
+// withdrawal on the site; the shop gets the declaration and the customer an immediate receipt by email.
+async function withdrawal(env, body) {
+  const name = String(body?.name || '').trim().slice(0, 120);
+  const email = String(body?.email || '').trim();
+  const order = String(body?.order || '').trim().toUpperCase();
+  const items = String(body?.items || '').trim().slice(0, 1000);
+  if (!name || !emailOk(email) || !/^[A-Z0-9-]{3,40}$/.test(order)) return json({ error: 'Bitte Name, E-Mail und Rechnungsnummer prüfen.' }, 400);
+  if (!smtpReady(env)) return json({ error: 'E-Mail-Versand ist noch nicht konfiguriert.' }, 503);
+  const at = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', dateStyle: 'long', timeStyle: 'short' }).format(new Date());
+  const shop = env.MAIL_TO_INFO || 'info@digital-future.ai';
+  const what = items || 'gesamte Bestellung';
+  try {
+    await sendMail(env, {
+      to: shop, reply: email, subject: `[SakanVIP Widerruf] ${order}`,
+      text: `Widerruf über die Website, eingegangen am ${at} Uhr.\n\nName: ${name}\nE-Mail: ${email}\nRechnungsnummer: ${order}\nArtikel: ${what}`
+    });
+    await sendMail(env, {
+      to: email, reply: shop, subject: `Eingangsbestätigung Ihres Widerrufs – ${order}`,
+      text: [
+        `Guten Tag ${name},`, '',
+        `wir bestätigen den Eingang Ihres Widerrufs am ${at} Uhr.`, '',
+        `Rechnungsnummer: ${order}`, `Widerrufene Artikel: ${what}`, '',
+        'Bitte senden Sie die Ware innerhalb von 14 Tagen an: SAKAN, Ehndorfer Str. 130, 24537 Neumünster, Deutschland.',
+        'Bitte schreiben Sie uns vor der Rücksendung kurz an diese Adresse; wir antworten mit allen Details.',
+        'Wir erstatten Ihre Zahlung unverzüglich, spätestens 14 Tage nach Eingang Ihres Widerrufs, über das ursprüngliche Zahlungsmittel. Wir können die Erstattung zurückhalten, bis die Ware bei uns eingegangen ist oder Sie die Rücksendung nachgewiesen haben.', '',
+        `Mit freundlichen Grüßen\n${env.SHOP_NAME || 'SAKANVIP'}`
+      ].join('\n')
+    });
+    return json({ ok: true }, 202);
+  } catch (err) {
+    console.error('Withdrawal mail failed:', order, err.message);
+    return json({ error: 'Ihr Widerruf konnte gerade nicht gesendet werden.' }, 503);
+  }
+}
+
 async function stripeSession(env, body, origin) {
   if (!env.STRIPE_SECRET_KEY) return json({ error: 'Stripe ist noch nicht konfiguriert.' }, 503);
   try {
@@ -356,6 +392,7 @@ async function cjAdmin(env, request, pathname) {
 
 const routes = {
   '/api/contact': (env, body) => contact(env, body),
+  '/api/withdrawal': (env, body) => withdrawal(env, body),
   '/api/payments/stripe/session': stripeSession,
   '/api/payments/paypal/order': paypalOrder,
   '/api/payments/paypal/capture': (env, body, origin, ctx) => paypalCapture(env, body, ctx)
@@ -368,7 +405,18 @@ export default {
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    // One public address for search engines: pages on www or on the production workers.dev name
+    // move permanently to CANONICAL_HOST. API calls and branch previews (<branch>-sakanvip-cf...) stay.
+    const canonical = env.CANONICAL_HOST;
+    if (canonical && url.hostname !== canonical && (request.method === 'GET' || request.method === 'HEAD') && !url.pathname.startsWith('/api/') &&
+        (url.hostname === 'www.' + canonical || (url.hostname.startsWith('sakanvip-cf.') && url.hostname.endsWith('.workers.dev')))) {
+      return Response.redirect(`https://${canonical}${url.pathname}${url.search}`, 301);
+    }
     if (url.pathname === '/health') return json({ ok: true });
+    // Public storefront settings; the PayPal client ID is public by design (it is in the SDK URL).
+    if (url.pathname === '/api/config') {
+      return json({ paypalClientId: env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET ? env.PAYPAL_CLIENT_ID : null }, 200, { 'Cache-Control': 'no-store' });
+    }
     if (url.pathname === '/api/payments/stripe/webhook') {
       return request.method === 'POST' ? stripeWebhook(env, request, ctx) : json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
     }
