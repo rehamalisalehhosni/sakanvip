@@ -406,6 +406,10 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ ok: true });
+    // Public storefront settings; the PayPal client ID is public by design (it is in the SDK URL).
+    if (url.pathname === '/api/config') {
+      return json({ paypalClientId: env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET ? env.PAYPAL_CLIENT_ID : null }, 200, { 'Cache-Control': 'no-store' });
+    }
     if (url.pathname === '/api/payments/stripe/webhook') {
       return request.method === 'POST' ? stripeWebhook(env, request, ctx) : json({ error: 'Method not allowed' }, 405, { Allow: 'POST' });
     }
