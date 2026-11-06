@@ -180,7 +180,8 @@ async function stripeSession(env, body, origin) {
   try {
     const items = await trustedCart(env, body?.items);
     const shipping = validateShipping(body?.shipping);
-    const metadata = { shipping_street: shipping.street, shipping_city: shipping.city, shipping_postal_code: shipping.postalCode, shipping_country: shipping.country, shipping_phone: shipping.phone };
+    // The Stripe account is shared with other shops: `shop` marks SakanVIP's sessions for the webhook.
+    const metadata = { shop: 'sakanvip', shipping_street: shipping.street, shipping_city: shipping.city, shipping_postal_code: shipping.postalCode, shipping_country: shipping.country, shipping_phone: shipping.phone };
     const stripe = new Stripe(env.STRIPE_SECRET_KEY, { httpClient: Stripe.createFetchHttpClient() });
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -320,6 +321,11 @@ async function recordStripeOrder(env, stripe, session) {
   }, sendMail);
 }
 
+const isSakanvipSession = session => {
+  const meta = session.metadata || {};
+  return meta.shop ? meta.shop === 'sakanvip' : Boolean(meta.shipping_phone);
+};
+
 // Stripe calls this server-to-server, so it has no Origin header and needs the raw body for the signature.
 async function stripeWebhook(env, request, ctx) {
   if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) return new Response('Stripe webhook is not configured.', { status: 503 });
@@ -339,6 +345,9 @@ async function stripeWebhook(env, request, ctx) {
     case 'checkout.session.async_payment_succeeded':
       console.log('Stripe payment completed:', event.data.object.id, event.data.object.payment_status);
       if (event.data.object.payment_status !== 'paid') break; // delayed methods arrive as async_payment_succeeded
+      // Every shop on the shared Stripe account (HelpMey, NEXORA) gets every event. SakanVIP sessions carry
+      // shop "sakanvip"; older ones only the delivery phone, which other shops' sessions do not have.
+      if (!isSakanvipSession(event.data.object)) { console.log('Stripe session of another shop ignored:', event.data.object.id); break; }
       try {
         const order = await recordStripeOrder(env, stripe, event.data.object);
         // The CJ order runs after Stripe gets its answer; failures are kept on the order and retried by the cron.
