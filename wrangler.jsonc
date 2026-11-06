@@ -39,7 +39,7 @@
     "SHOP_VAT_RATE": "0",
     // CJ fulfilment (worker/cj.js). CJ_AUTO_PAY "on" pays CJ orders from the CJ wallet; "off" leaves them
     // waiting in CJ for the owner. CJ_IOSS_TYPE 3 = CJ collects EU import VAT. CJ_SANDBOX "on" makes test orders only.
-    "CJ_AUTO_PAY": "off",
+    "CJ_AUTO_PAY": "on",
     "CJ_IOSS_TYPE": "3",
     "CJ_SANDBOX": "off",
     // Before auto-paying: hold the order if CJ's cost is above this share of the sale, and email the owner
