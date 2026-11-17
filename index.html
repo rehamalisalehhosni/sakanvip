@@ -406,7 +406,7 @@ renderNav();renderTiles();makeGrid($('womenGrid'),20,label(categories[2]));loadP
 <div id="consentBar" class="consent-bar" role="region" aria-label="Cookie-Hinweis" hidden><p id="consentText"></p><div class="consent-actions"><button type="button" id="consentDecline"></button><button type="button" id="consentAccept"></button></div></div>
 <style>.consent-bar{position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;max-width:960px;margin:0 auto;padding:14px 16px;border:1px solid #d4af37;border-radius:12px;background:#0f0d14;color:#f3e9d2;font:14px/1.5 Inter,system-ui,sans-serif;box-shadow:0 8px 30px #0009}.consent-bar[hidden]{display:none}.consent-bar p{margin:0;flex:1 1 320px}.consent-actions{display:flex;gap:10px;flex-wrap:wrap}.consent-actions button{min-height:44px;padding:0 20px;border:1px solid #d4af37;border-radius:8px;background:#1b1722;color:#f3e9d2;font:600 14px Inter,system-ui,sans-serif;cursor:pointer}.consent-actions button:focus-visible{outline:2px solid #f3e9d2;outline-offset:2px}</style>
 <script>
-// Cookie consent: Google Tag Manager (GTM-PXM3GCZ7, with Google Analytics inside) loads only after "Accept"
+// Cookie consent: the Google tag GTM-PXM3GCZ7 (Google Analytics) loads only after "Accept"
 // (TDDDG § 25 / DSGVO). "Decline" is equally easy; "Cookie-Einstellungen" in the footer reopens the choice.
 (function(){
 const KEY='sakanvip_consent_v1',GTM_ID='GTM-PXM3GCZ7';
@@ -416,7 +416,7 @@ ar:{text:'نود قياس كيفية استخدام متجرنا عبر Google A
 const bar=document.getElementById('consentBar');
 const read=()=>{try{return localStorage.getItem(KEY)}catch{return null}};
 const save=v=>{try{localStorage.setItem(KEY,v)}catch{}};
-function loadGtm(){if(window.__gtmLoaded)return;window.__gtmLoaded=true;window.dataLayer=window.dataLayer||[];window.dataLayer.push({'gtm.start':Date.now(),event:'gtm.js'});const s=document.createElement('script');s.async=true;s.src='https://www.googletagmanager.com/gtm.js?id='+GTM_ID;document.head.appendChild(s)}
+function loadGtm(){if(window.__gtmLoaded)return;window.__gtmLoaded=true;window.dataLayer=window.dataLayer||[];window.gtag=function(){window.dataLayer.push(arguments)};window.gtag('js',new Date());const s=document.createElement('script');s.async=true;s.src='https://www.googletagmanager.com/gtm.js?id='+GTM_ID;document.head.appendChild(s)}
 function show(){const t=T[(document.documentElement.lang||'de').slice(0,2)]||T.de;document.getElementById('consentText').textContent=t.text;document.getElementById('consentAccept').textContent=t.accept;document.getElementById('consentDecline').textContent=t.decline;bar.hidden=false}
 document.getElementById('consentAccept').addEventListener('click',()=>{save('granted');bar.hidden=true;loadGtm()});
 // Withdrawing after Google was loaded needs a reload so its scripts are gone.
